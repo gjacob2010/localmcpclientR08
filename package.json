@@ -1,0 +1,19 @@
+{
+  "name": "mcp-openrouter-anythingllm-client",
+  "version": "3.0.0",
+  "description": "Medical Decision Support System with MCP, OpenRouter, and AnythingLLM RAG",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
