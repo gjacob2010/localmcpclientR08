@@ -494,10 +494,6 @@
         <div class="settings-panel" id="settingsPanel">
             <div class="settings-inner">
                 <div class="input-group">
-                    <label>OpenRouter API Key</label>
-                    <input type="password" id="apiKey" placeholder="sk-or-..." value = "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">
-                </div>
-                <div class="input-group">
                     <label>Model</label>
                     <select id="model">
 <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
@@ -819,18 +815,14 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
             if (isProcessing) return;
 	    var selectedRadio = document.querySelector('input[name="searchType"]:checked');	
             const input     = document.getElementById('messageInput');
-            const apiKey    = document.getElementById('apiKey').value;
+            //const apiKey    = document.getElementById('apiKey').value;
             const model     = document.getElementById('model').value;
             const serverId  = document.getElementById('serverSelect').value || null;
             const message   = input.value.trim() + selectedRadio.value;
             
 
             if (!message) return;
-            if (!apiKey) {
-                addSystemMessage('Please enter your OpenRouter API key (tap ⚙️ above)');
-                return;
-            }
-
+            
             addMessage('user', message);
             conversationMessages.push({ role: 'user', content: message });
             input.value = '';
@@ -853,7 +845,7 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
                 const response = await fetch(`${API_BASE}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messages: conversationMessages, model, apiKey, serverId })
+                    body: JSON.stringify({ messages: conversationMessages, model, serverId })
                 });
 
                 if (!response.ok) throw new Error('API request failed');

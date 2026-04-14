@@ -239,14 +239,9 @@ app.post('/api/chat', async (req, res) => {
     const { 
       messages, 
       model, 
-      apiKey, 
       serverId, 
     } = req.body;
     let maxIterations = 10;
-
-    if (!apiKey) {
-      return res.status(400).json({ error: 'OpenRouter API key required' });
-    }
 
     // Set up SSE headers for streaming
     res.setHeader('Content-Type', 'text/event-stream');
@@ -323,7 +318,7 @@ Always use these tools before responding to any medical query.`
       const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'http://localhost:3000',
           'X-Title': 'MCP OpenRouter Client'
@@ -649,6 +644,7 @@ app.post('/api/servers/:serverId/prompts/:promptName', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 
 // Health check
 app.get('/api/health', (req, res) => {
