@@ -491,6 +491,16 @@ Always use these tools before responding to any medical query.`
             });
           }
 
+          // Sanitize the result to prevent JSON parsing errors
+if (result.content?.[0]?.text) {
+  result.content[0].text = result.content[0].text
+    .replace(/\\/g, '\\\\')  // Escape backslashes
+    .replace(/"/g, '\\"')     // Escape quotes
+    .replace(/\n/g, '\\n')    // Escape newlines
+    .replace(/\r/g, '\\r')    // Escape carriage returns
+    .replace(/\t/g, '\\t');   // Escape tabs
+}
+
           // Store tool result
           toolResults.push({
             tool: toolName,
