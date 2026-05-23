@@ -848,88 +848,66 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
 
                 if (!response.ok) throw new Error('API request failed');
 
-                const reader = response.body.getReader();
-const decoder = new TextDecoder();
+                const reader  = response.body.getReader();
+                const decoder = new TextDecoder();
 
-// FIXED BUFFERED SSE PARSER
-let buffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-while (true) {
-    const { done, value } = await reader.read();
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n\n').filter(l => l.trim() !== '');
 
-    if (done) break;
+                    for (const line of lines) {
+                        if (!line.startsWith('event: ')) continue;
 
-    buffer += decoder.decode(value, { stream: true });
+                        const [eventLine, dataLine] = line.split('\n');
+                        const event = eventLine.slice(7);
+                        const data  = JSON.parse(dataLine.slice(6));
 
-    const parts = buffer.split('\n\n');
+                        if (event === 'content') {
+                            currentContent += data.content;
+                            assistantMessageDiv.innerHTML = currentContent;
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-    buffer = parts.pop() || '';
+                        } else if (event === 'tool_calls_start') {
+                            addSystemMessage(`🔍 Searching ${data.count} source(s)…`);
 
-    for (const part of parts) {
+                        } else if (event === 'tool_call') {
+                            addSystemMessage(`📚 Calling: ${data.tool}`);
 
-        if (!part.includes('event:')) continue;
+                        } else if (event === 'tool_result') {
+                            currentToolResults.push({
+                                tool: data.tool, arguments: data.arguments,
+                                rawResult: data.rawResult, displayResult: data.displayResult
+                            });
+                            assistantMessageDiv.appendChild(
+                                buildToolDiv(data.tool, data.displayResult, data.rawResult)
+                            );
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-        const lines = part.split('\n');
+                        } else if (event === 'tool_calls_end') {
+                            currentContent = '';
+                            assistantMessageDiv.textContent = '';
+                            currentToolResults.forEach(tc => {
+                                assistantMessageDiv.appendChild(
+                                    buildToolDiv(tc.tool, tc.displayResult, tc.rawResult)
+                                );
+                            });
+                            const finalDiv = document.createElement('div');
+                            finalDiv.className = 'message assistant';
+                            messagesDiv.appendChild(finalDiv);
+                            assistantMessageDiv = finalDiv;
 
-        let event = '';
-        let data = '';
+                        } else if (event === 'done') {
+                            conversationMessages = data.conversationMessages;
 
-        for (const line of lines) {
-            if (line.startsWith('event: ')) {
-                event = line.slice(7).trim();
-            }
+                        } else if (event === 'error') {
+                            addSystemMessage(`Error: ${data.message}`);
+                        }
+                    }
+                }
 
-            if (line.startsWith('data: ')) {
-                data += line.slice(6);
-            }
-        }
-
-        if (!event || !data) continue;
-
-        try {
-            const parsed = JSON.parse(data);
-
-            if (event === 'content') {
-                currentContent += parsed.content;
-                assistantMessageDiv.innerHTML = currentContent;
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-            } else if (event === 'tool_calls_start') {
-                addSystemMessage(`🔍 Searching ${parsed.count} source(s)…`);
-
-            } else if (event === 'tool_call') {
-                addSystemMessage(`📚 Calling: ${parsed.tool}`);
-
-            } else if (event === 'tool_result') {
-
-                currentToolResults.push({
-                    tool: parsed.tool,
-                    arguments: parsed.arguments,
-                    rawResult: parsed.rawResult,
-                    displayResult: parsed.displayResult
-                });
-
-                assistantMessageDiv.appendChild(
-                    buildToolDiv(parsed.tool, parsed.displayResult, parsed.rawResult)
-                );
-
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-            } else if (event === 'tool_calls_end') {
-
-                currentContent = '';
-                assistantMessageDiv.textContent = '';
-
-                currentToolResults.forEach(tc => {
-                    assistantMessageDiv.appendChild(
-                        buildToolDiv(tc.tool, tc.displayResult, tc.rawResult)
-                    );
-                });
-
-                const finalDiv = document.createElement('div');
-                finalDiv.className = 'message assistant';
-                messagesDiv.appendChild(finalDiv);
-}
             } catch (error) {
                 addSystemMessage(`Error: ${error.message}`);
                 console.error('Chat error:', error);
