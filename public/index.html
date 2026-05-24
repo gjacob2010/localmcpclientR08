@@ -850,15 +850,15 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
 
                 const reader  = response.body.getReader();
                 const decoder = new TextDecoder();
-
+				let streamBuffer = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n\n').filter(l => l.trim() !== '');
-
-                    for (const line of lines) {
+                    streamBuffer += decoder.decode(value, { stream: true });
+                    const parts = streamBuffer.split('\n\n');
+streamBuffer = parts.pop();
+                    for (const line of parts) {
                         if (!line.startsWith('event: ')) continue;
 
                         const [eventLine, dataLine] = line.split('\n');
