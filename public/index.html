@@ -524,12 +524,22 @@
             <div class="sidebar-scroll">
                 <h2>☁️ Cloudflare AI Search</h2>
                 <div class="connect-form">
-                    <div id="ragStatus">
-                        <div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Initializing…</div>
-                    </div>
-                    <button onclick="initAISearch()" style="margin-top:10px;">Re-initialize RAG</button>
-		<button onclick="initAISearchGyn()" style="margin-top:12px;">Gyne RAG</button>					
-                    <p style="margin-top:10px;font-size:0.72rem;color:#64748b;">Uses Cloudflare AI Search — configured via .env</p>
+<div id="ragStatus">
+  <div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Initializing…</div>
+</div>
+
+<div style="display:flex;gap:8px;margin-top:10px;">
+  <button id="btnOB" onclick="initAISearch()" style="flex:1;">
+    OB RAG
+  </button>
+  <button id="btnGyn" onclick="initAISearchGyn()" style="flex:1;">
+    Gyne RAG
+  </button>
+</div>
+
+<p style="margin-top:10px;font-size:0.72rem;color:#64748b;">
+  Active RAG shown above — click to switch
+</p>
                 </div>
 
                 <h2>🔧 MCP Server</h2>
@@ -655,63 +665,55 @@
 
         // ── RAG / MCP ────────────────────────────────────────────
 
-        async function initAISearch() {
-            const statusDiv = document.getElementById('ragStatus');
-            statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+       async function initAISearch() {
+  const statusDiv = document.getElementById('ragStatus');
+  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
 
-            try {
-                const response = await fetch('/api/aisearch/init', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                const data = await response.json();
+  try {
+    const response = await fetch('/api/aisearch/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
 
-                if (response.ok) {
-                    statusDiv.innerHTML = `<div class="status-badge success">✅ AI Search ready: ${data.instanceName}</div>`;
-                    addSystemMessage('✅ Cloudflare AI Search RAG ready');
-                    if (window.innerWidth <= 768) {
-                        sidebar.classList.remove('open');
-                        backdrop.classList.remove('visible');
-                        hamburgerBtn.classList.remove('active');
-                    }
-                } else {
-                    statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
-                    addSystemMessage(`RAG Error: ${data.error}`);
-                }
-            } catch (error) {
-                statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
-                addSystemMessage(`RAG Error: ${error.message}`);
-            }
-        }
+    if (response.ok) {
+      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: OB Guidelines (${data.instanceName})</div>`;
+      // highlight active button
+      document.getElementById('btnOB').style.outline  = '2px solid #22c55e';
+      document.getElementById('btnGyn').style.outline = 'none';
+      addSystemMessage('✅ Switched to OB Guidelines RAG');
+    } else {
+      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+  }
+}
 
-		        async function initAISearchGyn() {
-            const statusDiv = document.getElementById('ragStatus');
-            statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+async function initAISearchGyn() {
+  const statusDiv = document.getElementById('ragStatus');
+  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
 
-            try {
-                const response = await fetch('/api/aisearch/initGyn', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                const data = await response.json();
+  try {
+    const response = await fetch('/api/aisearch/initGyn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
 
-                if (response.ok) {
-                    statusDiv.innerHTML = `<div class="status-badge success">✅ AI Search ready: ${data.instanceName}</div>`;
-                    addSystemMessage('✅ Cloudflare AI Search RAG ready');
-                    if (window.innerWidth <= 768) {
-                        sidebar.classList.remove('open');
-                        backdrop.classList.remove('visible');
-                        hamburgerBtn.classList.remove('active');
-                    }
-                } else {
-                    statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
-                    addSystemMessage(`RAG Error: ${data.error}`);
-                }
-            } catch (error) {
-                statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
-                addSystemMessage(`RAG Error: ${error.message}`);
-            }
-        }
+    if (response.ok) {
+      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: Gynecology (${data.instanceName})</div>`;
+      // highlight active button
+      document.getElementById('btnGyn').style.outline  = '2px solid #22c55e';
+      document.getElementById('btnOB').style.outline   = 'none';
+      addSystemMessage('✅ Switched to Gynecology RAG');
+    } else {
+      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+  }
+}
 
         async function connectServer() {
             const serverId = document.getElementById('serverId').value;
