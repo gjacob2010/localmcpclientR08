@@ -539,7 +539,12 @@
                     </div>
                     <div class="form-group">
                         <label>SSE URL</label>
-                        <input type="text" id="serverUrl" value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse">
+						  <input list="serverUrl">
+  <datalist id="serverUrl">
+    <option value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse">
+    <option value="https://gjacob2010-mcp-server-r03.hf.space/gradio_api/mcp/sse">
+  </datalist>
+                        
                     </div>
                     <button onclick="connectServer()">Connect MCP</button>
                 </div>
@@ -611,7 +616,7 @@
 	var b = "https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse";
         window.addEventListener("load", initAISearch());
 	window.addEventListener("load", refreshServers());
-        window.addEventListener("load", connectServer(a,b));
+       // window.addEventListener("load", connectServer(a,b));
         let conversationMessages = [];
         let isProcessing = false;
 
@@ -678,11 +683,11 @@
             }
         }
 
-        async function connectServer(a,b) {
-            //const serverId = document.getElementById('serverId').value;
-            //const url      = document.getElementById('serverUrl').value;
-              const serverId = a;
-              const url      = b;
+        async function connectServer() {
+            const serverId = document.getElementById('serverId').value;
+            const url      = document.getElementById('serverUrl').value;
+             // const serverId = a;
+             // const url      = b;
 
             if (!serverId || !url) {
                 addSystemMessage('Please provide both Server ID and URL');
