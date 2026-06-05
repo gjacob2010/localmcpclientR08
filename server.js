@@ -203,6 +203,21 @@ app.post('/api/aisearch/init', async (req, res) => {
   }
 });
 
+//initialize gyne cloudflare ai search
+app.post('/api/aisearch/initGyn', async (req, res) => {
+  try {
+    await initAISearchGyn();
+    res.json({ 
+      success: true, 
+      instanceName: 'cold-cell-d95d',
+      message: 'Cloudflare AI Search initialized'
+    });
+  } catch (error) {
+    console.error('AI Search init error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Connect to a new MCP server
 app.post('/api/servers', async (req, res) => {
   try {
