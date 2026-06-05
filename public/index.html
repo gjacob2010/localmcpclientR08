@@ -684,6 +684,35 @@
             }
         }
 
+		        async function initAISearchGyn() {
+            const statusDiv = document.getElementById('ragStatus');
+            statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+
+            try {
+                const response = await fetch('/api/aisearch/initGyn', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusDiv.innerHTML = `<div class="status-badge success">✅ AI Search ready: ${data.instanceName}</div>`;
+                    addSystemMessage('✅ Cloudflare AI Search RAG ready');
+                    if (window.innerWidth <= 768) {
+                        sidebar.classList.remove('open');
+                        backdrop.classList.remove('visible');
+                        hamburgerBtn.classList.remove('active');
+                    }
+                } else {
+                    statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+                    addSystemMessage(`RAG Error: ${data.error}`);
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+                addSystemMessage(`RAG Error: ${error.message}`);
+            }
+        }
+
         async function connectServer() {
             const serverId = document.getElementById('serverId').value;
             const url      = document.getElementById('serverUrl').value;
