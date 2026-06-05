@@ -54,6 +54,41 @@ async function initAISearch() {
   }
 }
 
+async function initAISearchGyn() {
+  // Validate credentials are present
+  if (!CF_ACCOUNT_ID || !CF_AI_SEARCH_NAME || !CF_API_TOKEN) {
+    throw new Error('Missing Cloudflare AI Search credentials in .env file');
+  }
+
+  // Test connection by doing a lightweight search
+  try {
+    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CF_API_TOKEN}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'test' }],
+        ai_search_options: { retrieval: { max_num_results: 1 } }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
+    }
+
+    aiSearchReady = true;
+    console.log('Cloudflare AI Search Gyne initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('AI Search init error:', error);
+    throw error;
+  }
+}
+
+
 async function queryAISearch(question) {
   if (!aiSearchReady) {
     throw new Error('Cloudflare AI Search not initialized');
