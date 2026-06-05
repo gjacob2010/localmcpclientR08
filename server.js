@@ -19,6 +19,7 @@ const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const CF_AI_SEARCH_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/${CF_AI_SEARCH_NAME}`;
 
 let aiSearchReady = false;
+let activeSearchUrl = CF_AI_SEARCH_URL;
 
 async function initAISearch() {
   // Validate credentials are present
@@ -46,6 +47,7 @@ async function initAISearch() {
     }
 
     aiSearchReady = true;
+    activeSearchUrl = CF_AI_SEARCH_URL; 
     console.log('Cloudflare AI Search initialized successfully');
     return true;
   } catch (error) {
@@ -62,7 +64,8 @@ async function initAISearchGyn() {
 
   // Test connection by doing a lightweight search
   try {
-    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d/search`, {
+    const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d`;
+    const response = const response = await fetch(`${GYN_URL}/search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -80,6 +83,7 @@ async function initAISearchGyn() {
     }
 
     aiSearchReady = true;
+    activeSearchUrl = GYN_URL; 
     console.log('Cloudflare AI Search Gyne initialized successfully');
     return true;
   } catch (error) {
@@ -94,7 +98,7 @@ async function queryAISearch(question) {
     throw new Error('Cloudflare AI Search not initialized');
   }
 
-  const response = await fetch(`${CF_AI_SEARCH_URL}/chat/completions`, {
+  const response = await fetch(`${activeSearchUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
