@@ -57,15 +57,14 @@ async function initAISearch() {
 }
 
 async function initAISearchGyn() {
-  // Validate credentials are present
   if (!CF_ACCOUNT_ID || !CF_AI_SEARCH_NAME || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
-  // Test connection by doing a lightweight search
+  const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d`;
+
   try {
-    const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d`;
-    const response = const response = await fetch(`${GYN_URL}/search`, {
+    const response = await fetch(`${GYN_URL}/search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -83,7 +82,7 @@ async function initAISearchGyn() {
     }
 
     aiSearchReady = true;
-    activeSearchUrl = GYN_URL; 
+    activeSearchUrl = GYN_URL;
     console.log('Cloudflare AI Search Gyne initialized successfully');
     return true;
   } catch (error) {
