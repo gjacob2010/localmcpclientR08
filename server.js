@@ -707,7 +707,8 @@ app.get('/api/health', (req, res) => {
     status: 'ok', 
     connectedServers: mcpClients.size,
     aiSearchReady: aiSearchReady,
-    aiSearchInstance: CF_AI_SEARCH_NAME || 'not configured'
+    activeSearchUrl: activeSearchUrl,
+    aiSearchInstance: activeSearchUrl.includes('cold-cell-d95d') ? 'Gynecology' : CF_AI_SEARCH_NAME
   });
 });
 
