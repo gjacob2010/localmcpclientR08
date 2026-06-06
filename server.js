@@ -61,7 +61,7 @@ async function initAISearchGyn() {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
-  const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/cold-cell-d95d`;
+  const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/gyne1`;
 
   try {
     const response = await fetch(`${GYN_URL}/search`, {
@@ -212,7 +212,7 @@ app.post('/api/aisearch/initGyn', async (req, res) => {
     await initAISearchGyn();
     res.json({ 
       success: true, 
-      instanceName: 'cold-cell-d95d',
+      instanceName: 'gyne1',
       message: 'Cloudflare AI Search initialized'
     });
   } catch (error) {
@@ -708,7 +708,7 @@ app.get('/api/health', (req, res) => {
     connectedServers: mcpClients.size,
     aiSearchReady: aiSearchReady,
     activeSearchUrl: activeSearchUrl,
-    aiSearchInstance: activeSearchUrl.includes('cold-cell-d95d') ? 'Gynecology' : 'obgyn4'
+    aiSearchInstance: activeSearchUrl.includes('gyne1') ? 'Gynecology' : 'obgyn4'
   });
 });
 
