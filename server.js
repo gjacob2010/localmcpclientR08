@@ -16,7 +16,7 @@ const mcpClients = new Map();
 const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_AI_SEARCH_NAME = process.env.CLOUDFLARE_AI_SEARCH_NAME;
 const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const CF_AI_SEARCH_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/${CF_AI_SEARCH_NAME}`;
+const CF_AI_SEARCH_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/obgyn4`;
 
 let aiSearchReady = false;
 let activeSearchUrl = CF_AI_SEARCH_URL;
@@ -57,7 +57,7 @@ async function initAISearch() {
 }
 
 async function initAISearchGyn() {
-  if (!CF_ACCOUNT_ID || !CF_AI_SEARCH_NAME || !CF_API_TOKEN) {
+  if (!CF_ACCOUNT_ID || ! || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
@@ -197,7 +197,7 @@ app.post('/api/aisearch/init', async (req, res) => {
     await initAISearch();
     res.json({ 
       success: true, 
-      instanceName: CF_AI_SEARCH_NAME,
+      instanceName: 'obgyn4',
       message: 'Cloudflare AI Search initialized'
     });
   } catch (error) {
@@ -708,7 +708,7 @@ app.get('/api/health', (req, res) => {
     connectedServers: mcpClients.size,
     aiSearchReady: aiSearchReady,
     activeSearchUrl: activeSearchUrl,
-    aiSearchInstance: activeSearchUrl.includes('cold-cell-d95d') ? 'Gynecology' : CF_AI_SEARCH_NAME
+    aiSearchInstance: activeSearchUrl.includes('cold-cell-d95d') ? 'Gynecology' : 'obgyn4'
   });
 });
 
@@ -734,5 +734,5 @@ process.on('SIGTERM', async () => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`MCP OpenRouter Client running on http://localhost:${PORT}`);
-  console.log(`Cloudflare AI Search RAG ready - instance: ${CF_AI_SEARCH_NAME}`);
+  console.log(`Cloudflare AI Search RAG ready - instance: obgyn4`);
 });
