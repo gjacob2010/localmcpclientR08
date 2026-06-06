@@ -57,7 +57,7 @@ async function initAISearch() {
 }
 
 async function initAISearchGyn() {
-  if (!CF_ACCOUNT_ID || ! || !CF_API_TOKEN) {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
