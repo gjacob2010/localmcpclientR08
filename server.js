@@ -253,10 +253,11 @@ app.post('/api/servers', async (req, res) => {
 
 if (type === 'sse') {
   await connectToSSEServer(serverId, url);
-} else if (type === 'streamable-http') {  // ← add this
+} 
+else if (type === 'streamable-http') {  // ← add this
   await connectToSSEServer(serverId, url); // reuses the same function now using StreamableHTTP
 }
-    } else if (type === 'stdio') {
+     else if (type === 'stdio') {
       await connectToStdioServer(serverId, { command, args, env });
     } else {
       return res.status(400).json({ error: 'Invalid server type. Use "sse" or "stdio"' });
