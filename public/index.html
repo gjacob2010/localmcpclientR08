@@ -627,7 +627,7 @@
     <script>
         const API_BASE = '/api';
 	var a = "gradio-server";
-	var b = "https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse";
+	var b = "https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp";
        // window.addEventListener("load", initAISearch());
 	window.addEventListener("load", refreshServers());
        // window.addEventListener("load", connectServer(a,b));
@@ -733,7 +733,8 @@ async function initAISearchGyn() {
                 const response = await fetch(`${API_BASE}/servers`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ serverId, type: 'sse', url })
+                    //body: JSON.stringify({ serverId, type: 'sse', url })
+					body: JSON.stringify({ serverId, type: 'streamable-http', url })
                 });
                 const data = await response.json();
 
