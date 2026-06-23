@@ -40,10 +40,9 @@
             color: var(--text);
             display: flex;
             flex-direction: column;
-            height: 100dvh; /* dynamic viewport height — handles mobile browser chrome */
+            height: 100dvh;
         }
 
-        /* ── HEADER ─────────────────────────────────────────────── */
         .header {
             background: var(--bg-mid);
             border-bottom: 1px solid var(--border);
@@ -87,7 +86,6 @@
             color: var(--text);
         }
 
-        /* collapsible settings panel */
         .settings-panel {
             overflow: hidden;
             max-height: 0;
@@ -139,7 +137,6 @@
             border-color: var(--accent);
         }
 
-        /* ── LAYOUT ─────────────────────────────────────────────── */
         .main-container {
             display: flex;
             flex: 1;
@@ -147,7 +144,6 @@
             position: relative;
         }
 
-        /* ── SIDEBAR ────────────────────────────────────────────── */
         .sidebar {
             width: 300px;
             background: var(--bg-mid);
@@ -169,7 +165,6 @@
             margin-bottom: 12px;
         }
 
-        /* On mobile, sidebar overlays the chat */
         @media (max-width: 768px) {
             .sidebar {
                 position: absolute;
@@ -197,7 +192,6 @@
             }
         }
 
-        /* ── CHAT CONTAINER ─────────────────────────────────────── */
         .chat-container {
             flex: 1;
             display: flex;
@@ -248,7 +242,6 @@
             text-align: center;
         }
 
-        /* ── INPUT AREA ─────────────────────────────────────────── */
         .input-area {
             background: var(--bg-mid);
             border-top: 1px solid var(--border);
@@ -320,7 +313,6 @@
 
         .clear-btn:hover { background: #475569; }
 
-        /* ── SIDEBAR COMPONENTS ─────────────────────────────────── */
         .connect-form {
             background: var(--bg-deep);
             padding: 12px;
@@ -402,7 +394,6 @@
         .status-badge.success { background: var(--success-bg); color: var(--success-text); }
         .status-badge.error   { background: var(--error-bg);   color: var(--error-text); }
 
-        /* ── TOOL CALLS ─────────────────────────────────────────── */
         .tool-call {
             background: #422006;
             border: 1px solid #78350f;
@@ -445,7 +436,6 @@
             color: #fbbf24;
         }
 
-        /* ── LOADING SPINNER ────────────────────────────────────── */
         .loading {
             display: inline-block;
             width: 16px; height: 16px;
@@ -457,7 +447,6 @@
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ── DESKTOP: restore sidebar always-visible ────────────── */
         @media (min-width: 769px) {
             .sidebar-backdrop { display: none !important; }
             .hamburger-btn { display: none !important; }
@@ -467,10 +456,8 @@
 </head>
 <body>
 
-    <!-- HEADER -->
     <div class="header">
         <div class="header-top">
-            <!-- hamburger: mobile only -->
             <button class="icon-btn hamburger-btn" id="hamburgerBtn" title="Server settings" aria-label="Toggle sidebar">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                     <line x1="3" y1="6"  x2="21" y2="6"/>
@@ -481,7 +468,6 @@
 
             <h1>🏥 Medical Decision Support</h1>
 
-            <!-- gear: toggles settings panel -->
             <button class="icon-btn" id="settingsBtn" title="API settings" aria-label="Toggle settings">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"/>
@@ -490,17 +476,15 @@
             </button>
         </div>
 
-        <!-- Collapsible settings -->
         <div class="settings-panel" id="settingsPanel">
             <div class="settings-inner">
                 <div class="input-group">
                     <label>Model</label>
                     <select id="model">
-<option value="qwen/qwen3.6-plus">Qwen 3.6</option>
+                        <option value="qwen/qwen3.6-plus">Qwen 3.6</option>
                         <option value="anthropic/claude-haiku-4.5">Haiku 4.5</option>
                         <option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro</option>
-                        
-						<option value="qwen/qwen3.6-flash">Qwen3.6-flash</option>
+                        <option value="qwen/qwen3.6-flash">Qwen3.6-flash</option>
                     </select>
                 </div>
                 <div class="input-group">
@@ -513,33 +497,30 @@
         </div>
     </div>
 
-    <!-- MAIN -->
     <div class="main-container">
 
-        <!-- Sidebar backdrop (mobile tap-to-close) -->
         <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
-        <!-- SIDEBAR -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-scroll">
                 <h2>☁️ Cloudflare AI Search</h2>
                 <div class="connect-form">
-<div id="ragStatus">
-  <div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Initializing…</div>
-</div>
+                    <div id="ragStatus">
+                        <div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Initializing…</div>
+                    </div>
 
-<div style="display:flex;gap:8px;margin-top:10px;">
-  <button id="btnOB" onclick="initAISearch()" style="flex:1;">
-    OB RAG
-  </button>
-  <button id="btnGyn" onclick="initAISearchGyn()" style="flex:1;">
-    Gyne RAG
-  </button>
-</div>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <button id="btnOB" onclick="initAISearch()" style="flex:1;">
+                            OB RAG
+                        </button>
+                        <button id="btnGyn" onclick="initAISearchGyn()" style="flex:1;">
+                            Gyne RAG
+                        </button>
+                    </div>
 
-<p style="margin-top:10px;font-size:0.72rem;color:#64748b;">
-  Active RAG shown above — click to switch
-</p>
+                    <p style="margin-top:10px;font-size:0.72rem;color:#64748b;">
+                        Active RAG shown above — click to switch
+                    </p>
                 </div>
 
                 <h2>🔧 MCP Server</h2>
@@ -549,28 +530,28 @@
                         <input type="text" id="serverId" value="gradio-server">
                     </div>
                     <div class="form-group">
-                        <label>SSE URL</label>
-						  <input id="serverUrl" list="serverUrlOptions" value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/">
-  <datalist id="serverUrlOptions">
-    <option value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/">
-    <option value="https://gjacob2010-mcp-server-r03.hf.space/gradio_api/mcp/">
-  </datalist>
-                        
+                        <label>MCP URL</label>
+                        <input id="serverUrl" list="serverUrlOptions" value="https://gjacob2010-testmcp.hf.space/gradio_api/mcp/">
+                        <datalist id="serverUrlOptions">
+                            <option value="https://gjacob2010-testmcp.hf.space/gradio_api/mcp/">
+                        </datalist>
                     </div>
                     <button onclick="connectServer()">Connect MCP</button>
+                    <p style="margin-top:8px;font-size:0.72rem;color:#64748b;">
+                        Tries streamable-HTTP first, falls back to SSE automatically. Check server logs for which one connected.
+                    </p>
                 </div>
 
                 <div id="serverList"></div>
             </div>
         </div>
 
-        <!-- CHAT -->
         <div class="chat-container">
             <div class="messages" id="messages">
                 <div class="message system">
                     Welcome to the Medical Decision Support System!<br><br>
                     <strong>Setup:</strong><br>
-                    1. Tap ⚙️ to enter your OpenRouter API key<br>
+                    1. Tap 🔧 in the sidebar to connect your MCP server<br>
                     2. Cloudflare AI Search RAG initializes automatically<br>
                     3. Start asking medical questions
                 </div>
@@ -578,26 +559,26 @@
 
             <div class="input-area">
 
-<input type="radio" id="searchGuideline" name ="searchType" value="For the following question only use search_medical_guidelines. Don't use any gradio-server tools.">
-<label> Search Guidelines only
-</label>
-<input type="radio" id="searchMCPTools" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
-<label> Patient Decision Support with best guess about parameters 
-</label>
-<input type="radio" id="searchMCPTools" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, ask the user for more information for parameters">
-<label> Patient Decision Support with follow up questions about parameters
-</label>				
-<input type="radio" id="antenatalMCP" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines.  But you can use pregnancy_issue_lookup_tool if you dont find any specific MCP tool. If there are parameters missing, ask the user for more information for parameters.  Dont ever leave a parameter empty.">
-<label> Antenatal Record Support 
-</label>				
-<input type="radio" id="searchAll" name ="searchType" value="For the following question use gradio-server MCP tools and/or search_medical_guidelines. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
-<label> Do both 
-</label>
-<input type="radio" id="askLLM" name ="searchType" value="format the results using pretty html. but don't use css or it changes the whole gui. dont change font color or background color. just headings so i can see the results better. This query is just for the chat results that are already present.  Don't use any tools to answer.">
-<label> Format the resuls and hit send again. Or you can add additional instructions to format the results to your liking 
-</label>
+                <input type="radio" id="searchGuideline" name="searchType" value="For the following question only use search_medical_guidelines. Don't use any gradio-server tools.">
+                <label for="searchGuideline">Search Guidelines only</label>
+
+                <input type="radio" id="searchMCPToolsGuess" name="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
+                <label for="searchMCPToolsGuess">Patient Decision Support with best guess about parameters</label>
+
+                <input type="radio" id="searchMCPToolsFollowup" name="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, ask the user for more information for parameters">
+                <label for="searchMCPToolsFollowup">Patient Decision Support with follow up questions about parameters</label>
+
+                <input type="radio" id="antenatalMCP" name="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines.  But you can use pregnancy_issue_lookup_tool if you dont find any specific MCP tool. If there are parameters missing, ask the user for more information for parameters.  Dont ever leave a parameter empty.">
+                <label for="antenatalMCP">Antenatal Record Support</label>
+
+                <input type="radio" id="searchAll" name="searchType" value="For the following question use gradio-server MCP tools and/or search_medical_guidelines. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
+                <label for="searchAll">Do both</label>
+
+                <input type="radio" id="askLLM" name="searchType" value="format the results using pretty html. but don't use css or it changes the whole gui. dont change font color or background color. just headings so i can see the results better. This query is just for the chat results that are already present.  Don't use any tools to answer.">
+                <label for="askLLM">Format the results and hit send again. Or you can add additional instructions to format the results to your liking</label>
+
                 <div class="input-wrapper">
-			
+
                     <textarea id="messageInput"
                               placeholder="Describe the clinical scenario…"
                               onkeydown="handleKeyPress(event)"
@@ -626,15 +607,11 @@
 
     <script>
         const API_BASE = '/api';
-	var a = "gradio-server";
-	var b = "https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/";
-       // window.addEventListener("load", initAISearch());
-	window.addEventListener("load", refreshServers());
-       // window.addEventListener("load", connectServer(a,b));
+
+        window.addEventListener("load", refreshServers());
+
         let conversationMessages = [];
         let isProcessing = false;
-
-        // ── UI TOGGLES ───────────────────────────────────────────
 
         const hamburgerBtn  = document.getElementById('hamburgerBtn');
         const sidebar       = document.getElementById('sidebar');
@@ -659,87 +636,83 @@
             settingsBtn.classList.toggle('active');
         });
 
-        // ── TEXTAREA AUTO-RESIZE ─────────────────────────────────
-
         function autoResize(el) {
             el.style.height = 'auto';
             el.style.height = Math.min(el.scrollHeight, 120) + 'px';
         }
 
-        // ── RAG / MCP ────────────────────────────────────────────
+        async function initAISearch() {
+            const statusDiv = document.getElementById('ragStatus');
+            statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
 
-       async function initAISearch() {
-  const statusDiv = document.getElementById('ragStatus');
-  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+            try {
+                const response = await fetch('/api/aisearch/init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
 
-  try {
-    const response = await fetch('/api/aisearch/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await response.json();
+                if (response.ok) {
+                    statusDiv.innerHTML = `<div class="status-badge success">✅ Active: OB Guidelines (${data.instanceName})</div>`;
+                    document.getElementById('btnOB').style.outline  = '2px solid #22c55e';
+                    document.getElementById('btnGyn').style.outline = 'none';
+                    addSystemMessage('✅ Switched to OB Guidelines RAG');
+                } else {
+                    statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+            }
+        }
 
-    if (response.ok) {
-      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: OB Guidelines (${data.instanceName})</div>`;
-      // highlight active button
-      document.getElementById('btnOB').style.outline  = '2px solid #22c55e';
-      document.getElementById('btnGyn').style.outline = 'none';
-      addSystemMessage('✅ Switched to OB Guidelines RAG');
-    } else {
-      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
-    }
-  } catch (error) {
-    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
-  }
-}
+        async function initAISearchGyn() {
+            const statusDiv = document.getElementById('ragStatus');
+            statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
 
-async function initAISearchGyn() {
-  const statusDiv = document.getElementById('ragStatus');
-  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+            try {
+                const response = await fetch('/api/aisearch/initGyn', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
 
-  try {
-    const response = await fetch('/api/aisearch/initGyn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await response.json();
+                if (response.ok) {
+                    statusDiv.innerHTML = `<div class="status-badge success">✅ Active: Gynecology (${data.instanceName})</div>`;
+                    document.getElementById('btnGyn').style.outline  = '2px solid #22c55e';
+                    document.getElementById('btnOB').style.outline   = 'none';
+                    addSystemMessage('✅ Switched to Gynecology RAG');
+                } else {
+                    statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+            }
+        }
 
-    if (response.ok) {
-      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: Gynecology (${data.instanceName})</div>`;
-      // highlight active button
-      document.getElementById('btnGyn').style.outline  = '2px solid #22c55e';
-      document.getElementById('btnOB').style.outline   = 'none';
-      addSystemMessage('✅ Switched to Gynecology RAG');
-    } else {
-      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
-    }
-  } catch (error) {
-    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
-  }
-}
-
+        // FIX: no longer sends a hardcoded transport "type" — the server tries
+        // streamable-HTTP first and falls back to SSE automatically, then tells
+        // us which one actually connected.
         async function connectServer() {
             const serverId = document.getElementById('serverId').value;
             const url      = document.getElementById('serverUrl').value;
-             // const serverId = a;
-             // const url      = b;
 
             if (!serverId || !url) {
                 addSystemMessage('Please provide both Server ID and URL');
                 return;
             }
 
+            addSystemMessage(`🔄 Connecting to ${serverId}…`);
+
             try {
                 const response = await fetch(`${API_BASE}/servers`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    //body: JSON.stringify({ serverId, type: 'sse', url })
-					body: JSON.stringify({ serverId, type: 'streamable-http', url })
+                    body: JSON.stringify({ serverId, url })
                 });
                 const data = await response.json();
 
                 if (response.ok) {
-                    addSystemMessage(`✅ Connected to ${serverId}`);
+                    addSystemMessage(`✅ Connected to ${serverId} via ${data.transportType}`);
                     await refreshServers();
                     if (window.innerWidth <= 768) {
                         sidebar.classList.remove('open');
@@ -747,11 +720,10 @@ async function initAISearchGyn() {
                         hamburgerBtn.classList.remove('active');
                     }
                 } else {
-                    addSystemMessage(`Error: ${data.error}`);
+                    addSystemMessage(`❌ Error: ${data.error}`);
                 }
             } catch (error) {
-                addSystemMessage(`Error: ${error.message}`);
-
+                addSystemMessage(`❌ Error: ${error.message}`);
             }
         }
 
@@ -777,9 +749,7 @@ async function initAISearchGyn() {
                         <button class="button-small danger" onclick="disconnectServer('${s}')">✕</button>
                     </div>`).join('');
 
-                /*serverSelect.innerHTML = '<option value="">No tools</option>' +
-                    data.servers.map(s => `<option value="${s}">${s}</option>`).join('');*/
-serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</option>`).join('');
+                serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</option>`).join('');
 
             } catch (error) {
                 console.error('Error loading servers:', error);
@@ -797,8 +767,6 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
                 addSystemMessage(`Error: ${error.message}`);
             }
         }
-
-        // ── MESSAGES ─────────────────────────────────────────────
 
         function addMessage(role, content, toolCalls = null) {
             const messagesDiv  = document.getElementById('messages');
@@ -852,20 +820,16 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
             return toolDiv;
         }
 
-        // ── SEND MESSAGE ─────────────────────────────────────────
-
         async function sendMessage() {
             if (isProcessing) return;
-	    var selectedRadio = document.querySelector('input[name="searchType"]:checked');	
+            var selectedRadio = document.querySelector('input[name="searchType"]:checked');
             const input     = document.getElementById('messageInput');
-            //const apiKey    = document.getElementById('apiKey').value;
             const model     = document.getElementById('model').value;
             const serverId  = document.getElementById('serverSelect').value || null;
-            const message   = input.value.trim() + selectedRadio.value;
-            
+            const message   = input.value.trim() + (selectedRadio ? selectedRadio.value : '');
 
             if (!message) return;
-            
+
             addMessage('user', message);
             conversationMessages.push({ role: 'user', content: message });
             input.value = '';
@@ -895,14 +859,14 @@ serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</optio
 
                 const reader  = response.body.getReader();
                 const decoder = new TextDecoder();
-				let streamBuffer = '';
+                let streamBuffer = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
                     streamBuffer += decoder.decode(value, { stream: true });
                     const parts = streamBuffer.split('\n\n');
-streamBuffer = parts.pop();
+                    streamBuffer = parts.pop();
                     for (const line of parts) {
                         if (!line.startsWith('event: ')) continue;
 
@@ -964,8 +928,6 @@ streamBuffer = parts.pop();
         }
 
         function handleKeyPress(event) {
-            // On desktop: Enter sends, Shift+Enter inserts newline
-            // On mobile: never intercept Enter (let the keyboard handle it naturally)
             const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
             if (!isMobile && event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
