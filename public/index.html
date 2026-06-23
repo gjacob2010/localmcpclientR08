@@ -733,8 +733,8 @@ async function initAISearchGyn() {
                 const response = await fetch(`${API_BASE}/servers`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ serverId, type: 'sse', url })
-					//body: JSON.stringify({ serverId, type: 'streamable-http', url })
+                    //body: JSON.stringify({ serverId, type: 'sse', url })
+					body: JSON.stringify({ serverId, type: 'streamable-http', url })
                 });
                 const data = await response.json();
 
