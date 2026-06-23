@@ -130,7 +130,7 @@ async function queryAISearch(question) {
 }
 
 // Connect to an MCP server (SSE)
-async function connectToSSEServer(serverId, url) {
+/*async function connectToSSEServer(serverId, url) {
   const client = new Client({
     name: 'mcp-openrouter-client',
     version: '1.0.0'
@@ -148,7 +148,7 @@ async function connectToSSEServer(serverId, url) {
   
   return client;
 }
-
+*/
 async function connectToSSEServer(serverId, url) {
   // Clean up any existing broken connection first
   if (mcpClients.has(serverId)) {
