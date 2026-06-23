@@ -1,7 +1,7 @@
 import express from 'express';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-//import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+//import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -130,7 +130,7 @@ async function queryAISearch(question) {
 }
 
 // Connect to an MCP server (SSE)
-/*async function connectToSSEServer(serverId, url) {
+async function connectToSSEServer(serverId, url) {
   const client = new Client({
     name: 'mcp-openrouter-client',
     version: '1.0.0'
@@ -148,8 +148,8 @@ async function queryAISearch(question) {
   
   return client;
 }
-*/
-async function connectToSSEServer(serverId, url) {
+
+/*async function connectToSSEServer(serverId, url) {
   // Clean up any existing broken connection first
   if (mcpClients.has(serverId)) {
     try { await mcpClients.get(serverId).close(); } catch {}
@@ -168,7 +168,7 @@ async function connectToSSEServer(serverId, url) {
   mcpClients.set(serverId, client);
   return client;
 }
-
+*/
 // Connect to an MCP server (stdio)
 async function connectToStdioServer(serverId, config) {
   const client = new Client({
