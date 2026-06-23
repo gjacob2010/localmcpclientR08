@@ -251,8 +251,11 @@ app.post('/api/servers', async (req, res) => {
       return res.status(400).json({ error: 'Server already connected' });
     }*/
 
-    if (type === 'sse') {
-      await connectToSSEServer(serverId, url);
+if (type === 'sse') {
+  await connectToSSEServer(serverId, url);
+} else if (type === 'streamable-http') {  // ← add this
+  await connectToSSEServer(serverId, url); // reuses the same function now using StreamableHTTP
+}
     } else if (type === 'stdio') {
       await connectToStdioServer(serverId, { command, args, env });
     } else {
