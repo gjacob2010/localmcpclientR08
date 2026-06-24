@@ -12,88 +12,68 @@ app.use(express.static('public'));
 // serverId -> { client, transportType, url }
 const mcpClients = new Map();
 
-// Cloudflare AI Search configuration
-const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
-const CF_AI_SEARCH_NAME = process.env.CLOUDFLARE_AI_SEARCH_NAME;
-const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+// ── Cloudflare AI Search configuration ──────────────────────────────────
+
+const CF_ACCOUNT_ID   = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CF_API_TOKEN    = process.env.CLOUDFLARE_API_TOKEN;
 const CF_AI_SEARCH_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/obgyn4`;
 
-let aiSearchReady = false;
+let aiSearchReady  = false;
 let activeSearchUrl = CF_AI_SEARCH_URL;
 
 async function initAISearch() {
-  if (!CF_ACCOUNT_ID || !CF_AI_SEARCH_NAME || !CF_API_TOKEN) {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
-
-  try {
-    const response = await fetch(`${CF_AI_SEARCH_URL}/search`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${CF_API_TOKEN}`
-      },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: 'test' }],
-        ai_search_options: { retrieval: { max_num_results: 1 } }
-      })
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
-    }
-
-    aiSearchReady = true;
-    activeSearchUrl = CF_AI_SEARCH_URL;
-    console.log('Cloudflare AI Search initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('AI Search init error:', error);
-    throw error;
+  const response = await fetch(`${CF_AI_SEARCH_URL}/search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${CF_API_TOKEN}`
+    },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'test' }],
+      ai_search_options: { retrieval: { max_num_results: 1 } }
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
   }
+  aiSearchReady  = true;
+  activeSearchUrl = CF_AI_SEARCH_URL;
+  console.log('Cloudflare AI Search (OB) initialized successfully');
+  return true;
 }
 
 async function initAISearchGyn() {
   if (!CF_ACCOUNT_ID || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
-
   const GYN_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/gyne1`;
-
-  try {
-    const response = await fetch(`${GYN_URL}/search`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${CF_API_TOKEN}`
-      },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: 'test' }],
-        ai_search_options: { retrieval: { max_num_results: 1 } }
-      })
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
-    }
-
-    aiSearchReady = true;
-    activeSearchUrl = GYN_URL;
-    console.log('Cloudflare AI Search Gyne initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('AI Search init error:', error);
-    throw error;
+  const response = await fetch(`${GYN_URL}/search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${CF_API_TOKEN}`
+    },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: 'test' }],
+      ai_search_options: { retrieval: { max_num_results: 1 } }
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
   }
+  aiSearchReady  = true;
+  activeSearchUrl = GYN_URL;
+  console.log('Cloudflare AI Search (Gyne) initialized successfully');
+  return true;
 }
 
 async function queryAISearch(question) {
-  if (!aiSearchReady) {
-    throw new Error('Cloudflare AI Search not initialized');
-  }
-
+  if (!aiSearchReady) throw new Error('Cloudflare AI Search not initialized');
   const response = await fetch(`${activeSearchUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -107,12 +87,10 @@ async function queryAISearch(question) {
       }
     })
   });
-
   if (!response.ok) {
     const err = await response.json();
     throw new Error(`AI Search query failed: ${JSON.stringify(err.errors)}`);
   }
-
   const data = await response.json();
   return {
     textResponse: data.choices?.[0]?.message?.content || null,
@@ -122,7 +100,7 @@ async function queryAISearch(question) {
 
 // ── MCP connection: streamable-HTTP first, SSE fallback ─────────────────
 
-function buildMcpHeaders() {
+function buildHeaders() {
   const headers = {};
   if (process.env.HF_TOKEN) {
     headers['Authorization'] = `Bearer ${process.env.HF_TOKEN}`;
@@ -130,20 +108,21 @@ function buildMcpHeaders() {
   return headers;
 }
 
-async function connectMcpServer(serverId, baseUrl) {
+async function connectWithFallback(serverId, baseUrl) {
+  // Clean up any existing connection for this serverId first.
   if (mcpClients.has(serverId)) {
     try { await mcpClients.get(serverId).client.close(); } catch {}
     mcpClients.delete(serverId);
   }
 
-  const headers = buildMcpHeaders();
+  const headers = buildHeaders();
   const normalizedUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 
-  // Attempt 1: streamable-HTTP
+  // --- Attempt 1: streamable-HTTP ---
   try {
     console.log(`[${serverId}] Attempting streamable-HTTP connect to ${normalizedUrl}`);
     const client = new Client(
-      { name: 'mcp-openrouter-client', version: '1.0.0' },
+      { name: 'mcp-gradio-client', version: '1.0.0' },
       { capabilities: { tools: {}, resources: {}, prompts: {} } }
     );
     const transport = new StreamableHTTPClientTransport(new URL(normalizedUrl), {
@@ -157,15 +136,15 @@ async function connectMcpServer(serverId, baseUrl) {
     console.error(`[${serverId}] streamable-HTTP failed: ${err.message}`);
   }
 
-  // Attempt 2: SSE fallback (Gradio serves this at <base>/sse)
-  const sseUrl = normalizedUrl.replace(/\/$/, '').endsWith('/sse')
+  // --- Attempt 2: SSE fallback ---
+  const sseUrl = normalizedUrl.replace(/\/?$/, '').endsWith('/sse')
     ? normalizedUrl
     : `${normalizedUrl.replace(/\/$/, '')}/sse`;
 
   try {
     console.log(`[${serverId}] Attempting SSE connect to ${sseUrl}`);
     const client = new Client(
-      { name: 'mcp-openrouter-client', version: '1.0.0' },
+      { name: 'mcp-gradio-client', version: '1.0.0' },
       { capabilities: { tools: {}, resources: {}, prompts: {} } }
     );
     const transport = new SSEClientTransport(new URL(sseUrl), {
@@ -178,7 +157,7 @@ async function connectMcpServer(serverId, baseUrl) {
   } catch (err) {
     console.error(`[${serverId}] SSE failed: ${err.message}`);
     throw new Error(
-      `Both streamable-HTTP and SSE failed. Check the logs above for each attempt. SSE error: ${err.message}`
+      `Both streamable-HTTP and SSE failed. streamable-HTTP error logged above; SSE error: ${err.message}`
     );
   }
 }
@@ -209,7 +188,7 @@ app.post('/api/aisearch/init', async (req, res) => {
 app.post('/api/aisearch/initGyn', async (req, res) => {
   try {
     await initAISearchGyn();
-    res.json({ success: true, instanceName: 'gyne1', message: 'Cloudflare AI Search initialized' });
+    res.json({ success: true, instanceName: 'gyne1', message: 'Cloudflare AI Search Gyne initialized' });
   } catch (error) {
     console.error('AI Search init error:', error);
     res.status(500).json({ error: error.message });
@@ -222,7 +201,7 @@ app.post('/api/servers', async (req, res) => {
     if (!serverId || !url) {
       return res.status(400).json({ error: 'serverId and url are required' });
     }
-    const { transportType } = await connectMcpServer(serverId, url);
+    const { transportType } = await connectWithFallback(serverId, url);
     res.json({ success: true, serverId, transportType });
   } catch (error) {
     console.error('Connection error:', error);
@@ -231,8 +210,15 @@ app.post('/api/servers', async (req, res) => {
 });
 
 app.get('/api/servers', (req, res) => {
-  const servers = Array.from(mcpClients.keys());
-  res.json({ servers });
+  // Return richer info (id + transportType + url) — UI only uses the id list
+  // but having more detail helps debugging.
+  const servers = Array.from(mcpClients.entries()).map(([id, info]) => ({
+    serverId: id,
+    transportType: info.transportType,
+    url: info.url
+  }));
+  // Keep backward-compat: UI reads data.servers as an array of strings
+  res.json({ servers: servers.map(s => s.serverId) });
 });
 
 app.delete('/api/servers/:serverId', async (req, res) => {
@@ -240,7 +226,6 @@ app.delete('/api/servers/:serverId', async (req, res) => {
     const { serverId } = req.params;
     const entry = mcpClients.get(serverId);
     if (!entry) return res.status(404).json({ error: 'Server not found' });
-
     await entry.client.close();
     mcpClients.delete(serverId);
     res.json({ success: true });
@@ -253,15 +238,15 @@ app.get('/api/servers/:serverId/tools', async (req, res) => {
   try {
     const entry = mcpClients.get(req.params.serverId);
     if (!entry) return res.status(404).json({ error: 'Server not found' });
-
     const result = await entry.client.listTools();
     res.json(result);
   } catch (error) {
+    console.error('listTools error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Chat with OpenRouter (with MCP tool support and streaming)
+// Chat with OpenRouter (MCP tool support + streaming)
 app.post('/api/chat', async (req, res) => {
   try {
     const { messages, model, serverId } = req.body;
@@ -370,7 +355,6 @@ Always use these tools before responding to any medical query.`
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') continue;
-
             try {
               const parsed = JSON.parse(data);
               const delta = parsed.choices[0]?.delta;
@@ -385,9 +369,9 @@ Always use these tools before responding to any medical query.`
                   if (!toolCalls[tc.index]) {
                     toolCalls[tc.index] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
                   }
-                  if (tc.function?.name) toolCalls[tc.index].function.name = tc.function.name;
+                  if (tc.function?.name)      toolCalls[tc.index].function.name      = tc.function.name;
                   if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
-                  if (tc.id) toolCalls[tc.index].id = tc.id;
+                  if (tc.id)                  toolCalls[tc.index].id                  = tc.id;
                 }
               }
             } catch (e) {
@@ -427,9 +411,10 @@ Always use these tools before responding to any medical query.`
             try {
               if (!aiSearchReady) throw new Error('Cloudflare AI Search not initialized. Please initialize RAG first.');
               const ragResponse = await queryAISearch(toolArgs.query);
-
               if (ragResponse.textResponse) {
-                const sourcesText = ragResponse.sources.length > 0 ? `\n\nSources: ${ragResponse.sources.join(', ')}` : '';
+                const sourcesText = ragResponse.sources.length > 0
+                  ? `\n\nSources: ${ragResponse.sources.join(', ')}`
+                  : '';
                 result = { content: [{ type: 'text', text: ragResponse.textResponse + sourcesText }] };
               } else {
                 result = { content: [{ type: 'text', text: 'No relevant medical guidelines found.' }] };
@@ -439,6 +424,7 @@ Always use these tools before responding to any medical query.`
             }
             maxIterations = iterations + 1;
           } else {
+            // MCP tool call
             const entry = mcpClients.get(serverId);
             if (!entry) {
               sendEvent('error', { message: 'MCP server not connected' });
@@ -458,7 +444,11 @@ Always use these tools before responding to any medical query.`
             displayResult: result.content?.[0]?.text || JSON.stringify(result)
           });
 
-          conversationMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify(result) });
+          conversationMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result)
+          });
         }
 
         sendEvent('tool_calls_end', {});
@@ -485,13 +475,13 @@ app.post('/api/servers/:serverId/tools/:toolName/call', async (req, res) => {
   try {
     const entry = mcpClients.get(req.params.serverId);
     if (!entry) return res.status(404).json({ error: 'Server not found' });
-
     const result = await entry.client.callTool({
       name: req.params.toolName,
       arguments: req.body.arguments || {}
     });
     res.json(result);
   } catch (error) {
+    console.error('callTool error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -530,7 +520,10 @@ app.post('/api/servers/:serverId/prompts/:promptName', async (req, res) => {
   try {
     const entry = mcpClients.get(req.params.serverId);
     if (!entry) return res.status(404).json({ error: 'Server not found' });
-    res.json(await entry.client.getPrompt({ name: req.params.promptName, arguments: req.body.arguments || {} }));
+    res.json(await entry.client.getPrompt({
+      name: req.params.promptName,
+      arguments: req.body.arguments || {}
+    }));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -542,9 +535,11 @@ app.get('/api/health', (req, res) => {
     connectedServers: Array.from(mcpClients.keys()),
     aiSearchReady,
     activeSearchUrl,
-    aiSearchInstance: activeSearchUrl.includes('gyne1') ? 'Gynecology' : 'obgyn4'
+    aiSearchInstance: activeSearchUrl.includes('gyne1') ? 'Gynecology' : 'OB (obgyn4)'
   });
 });
+
+// ── Startup ──────────────────────────────────────────────────────────────
 
 initAISearch()
   .then(() => console.log('AI Search ready'))
@@ -565,5 +560,5 @@ process.on('SIGTERM', async () => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`MCP OpenRouter Client running on http://localhost:${PORT}`);
+  console.log(`Medical Decision Support running on http://localhost:${PORT}`);
 });
