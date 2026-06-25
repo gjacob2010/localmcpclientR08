@@ -226,10 +226,39 @@ app.post('/api/servers', async (req, res) => {
   try {
     const { serverId, type, url, command, args, env } = req.body;
     
+if (mcpClients.has(serverId)) {
+  try {
+    await mcpClients.get(serverId).close();
+    mcpClients.delete(serverId);
+    console.log(`Closed existing connection for ${serverId} before reconnecting`);
+  } catch (e) {
+    console.error(`Error closing old connection for ${serverId}:`, e);
+    mcpClients.delete(serverId); // delete it anyway
+  }
+}
+
+app.post('/api/servers/:serverId/reconnect', async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { type, url, command, args, env } = req.body;
+
     if (mcpClients.has(serverId)) {
-      return res.status(400).json({ error: 'Server already connected' });
+      await mcpClients.get(serverId).close().catch(() => {});
+      mcpClients.delete(serverId);
     }
 
+    if (type === 'sse') {
+      await connectToSSEServer(serverId, url);
+    } else if (type === 'stdio') {
+      await connectToStdioServer(serverId, { command, args, env });
+    }
+
+    res.json({ success: true, serverId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+    
     if (type === 'sse') {
       await connectToSSEServer(serverId, url);
     } else if (type === 'stdio') {
