@@ -1,992 +1,984 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Clinical Decision Support</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Medical Decision Support System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg-deep:    #0f172a;
+            --bg-mid:     #1e293b;
+            --border:     #334155;
+            --accent:     #3b82f6;
+            --accent-hover: #2563eb;
+            --text:       #e2e8f0;
+            --text-muted: #94a3b8;
+            --danger:     #ef4444;
+            --danger-hover: #dc2626;
+            --success-bg: #065f46;
+            --success-text: #6ee7b7;
+            --error-bg:   #7f1d1d;
+            --error-text: #fca5a5;
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+        }
 
-    :root {
-      --ink:        #0d1117;
-      --ink-2:      #161b22;
-      --ink-3:      #21262d;
-      --line:       #30363d;
-      --line-2:     #484f58;
-      --muted:      #8b949e;
-      --text:       #e6edf3;
-      --text-soft:  #c9d1d9;
-      --teal:       #2dd4bf;
-      --teal-dim:   #14b8a6;
-      --teal-glow:  rgba(45,212,191,0.12);
-      --amber:      #fbbf24;
-      --amber-dim:  rgba(251,191,36,0.15);
-      --red:        #f85149;
-      --green:      #3fb950;
-      --mono:       'JetBrains Mono', monospace;
-      --sans:       'Inter', system-ui, sans-serif;
-      --safe-b:     env(safe-area-inset-bottom, 0px);
-      --sidebar-w:  300px;
-    }
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
 
-    html, body { height: 100%; overflow: hidden; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: var(--bg-deep);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            height: 100dvh; /* dynamic viewport height — handles mobile browser chrome */
+        }
 
-    body {
-      font-family: var(--sans);
-      background: var(--ink);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      height: 100dvh;
-    }
+        /* ── HEADER ─────────────────────────────────────────────── */
+        .header {
+            background: var(--bg-mid);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
 
-    /* ── Top bar ── */
-    .topbar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 0 16px;
-      height: 52px;
-      background: var(--ink-2);
-      border-bottom: 1px solid var(--line);
-      flex-shrink: 0;
-      position: relative;
-      z-index: 10;
-    }
+        .header-top {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+        }
 
-    .topbar-logo {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex: 1;
-      min-width: 0;
-    }
+        h1 {
+            font-size: 1.1rem;
+            color: #60a5fa;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
 
-    .topbar-logo svg { flex-shrink: 0; }
+        .icon-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s;
+            flex-shrink: 0;
+            min-width: 36px;
+            min-height: 36px;
+        }
 
-    .topbar-title {
-      font-size: 0.88rem;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--teal);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
+        .icon-btn:hover, .icon-btn.active {
+            background: var(--border);
+            color: var(--text);
+        }
 
-    .topbar-pill {
-      font-size: 0.65rem;
-      font-weight: 500;
-      font-family: var(--mono);
-      padding: 2px 7px;
-      border-radius: 20px;
-      border: 1px solid var(--line);
-      color: var(--muted);
-      background: var(--ink-3);
-      white-space: nowrap;
-    }
+        /* collapsible settings panel */
+        .settings-panel {
+            overflow: hidden;
+            max-height: 0;
+            transition: max-height 0.3s ease;
+        }
 
-    .topbar-pill.ready { border-color: var(--teal); color: var(--teal); background: var(--teal-glow); }
-    .topbar-pill.warn  { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+        .settings-panel.open {
+            max-height: 300px;
+        }
 
-    .icon-btn {
-      background: none;
-      border: 1px solid transparent;
-      color: var(--muted);
-      cursor: pointer;
-      width: 34px; height: 34px;
-      border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-      flex-shrink: 0;
-    }
-    .icon-btn:hover, .icon-btn.active {
-      background: var(--ink-3);
-      border-color: var(--line);
-      color: var(--text);
-    }
+        .settings-inner {
+            padding: 0 16px 14px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
 
-    /* ── Settings drawer ── */
-    .settings-drawer {
-      overflow: hidden;
-      max-height: 0;
-      transition: max-height 0.25s ease;
-      background: var(--ink-2);
-      border-bottom: 1px solid var(--line);
-      flex-shrink: 0;
-    }
-    .settings-drawer.open { max-height: 120px; }
+        @media (max-width: 480px) {
+            .settings-inner {
+                grid-template-columns: 1fr;
+            }
+        }
 
-    .settings-inner {
-      display: flex;
-      gap: 12px;
-      padding: 12px 16px;
-      align-items: flex-end;
-    }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
 
-    .field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      flex: 1;
-      min-width: 0;
-    }
+        label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
 
-    .field label {
-      font-size: 0.68rem;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--muted);
-    }
+        input, select {
+            padding: 9px 10px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+            min-height: 40px;
+        }
 
-    select, input[type="text"] {
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--text);
-      font-family: var(--sans);
-      font-size: 0.85rem;
-      padding: 7px 10px;
-      height: 36px;
-      width: 100%;
-      transition: border-color 0.15s;
-    }
-    select:focus, input:focus { outline: none; border-color: var(--teal); }
-    select option { background: var(--ink-3); }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
 
-    /* ── Layout ── */
-    .layout {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-      position: relative;
-    }
+        /* ── LAYOUT ─────────────────────────────────────────────── */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
 
-    /* ── Sidebar ── */
-    .sidebar {
-      width: var(--sidebar-w);
-      background: var(--ink-2);
-      border-right: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-      flex-shrink: 0;
-      transition: transform 0.22s ease;
-    }
+        /* ── SIDEBAR ────────────────────────────────────────────── */
+        .sidebar {
+            width: 300px;
+            background: var(--bg-mid);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: transform 0.25s ease;
+        }
 
-    .sidebar-body { padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+        .sidebar-scroll {
+            padding: 16px;
+        }
 
-    .section-label {
-      font-size: 0.65rem;
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 8px;
-    }
+        .sidebar h2 {
+            font-size: 0.95rem;
+            color: #93c5fd;
+            margin-bottom: 12px;
+        }
 
-    /* RAG card */
-    .rag-card {
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-    }
+        /* On mobile, sidebar overlays the chat */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: absolute;
+                top: 0; left: 0; bottom: 0;
+                z-index: 100;
+                transform: translateX(-100%);
+                width: min(300px, 85vw);
+                box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+            }
 
-    .rag-status {
-      font-size: 0.78rem;
-      font-family: var(--mono);
-      color: var(--muted);
-      margin-bottom: 10px;
-      min-height: 20px;
-    }
-    .rag-status.ok  { color: var(--green); }
-    .rag-status.err { color: var(--red); }
+            .sidebar.open {
+                transform: translateX(0);
+            }
 
-    .rag-btns { display: flex; gap: 8px; }
+            .sidebar-backdrop {
+                display: none;
+                position: absolute;
+                inset: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 99;
+            }
 
-    .rag-btn {
-      flex: 1;
-      padding: 7px 0;
-      font-size: 0.78rem;
-      font-weight: 500;
-      font-family: var(--sans);
-      border-radius: 6px;
-      cursor: pointer;
-      border: 1px solid var(--line);
-      background: var(--ink);
-      color: var(--text-soft);
-      transition: background 0.15s, border-color 0.15s, color 0.15s;
-    }
-    .rag-btn:hover { background: var(--ink-3); border-color: var(--line-2); color: var(--text); }
-    .rag-btn.active { border-color: var(--teal); color: var(--teal); background: var(--teal-glow); }
+            .sidebar-backdrop.visible {
+                display: block;
+            }
+        }
 
-    .rag-hint { font-size: 0.68rem; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+        /* ── CHAT CONTAINER ─────────────────────────────────────── */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
 
-    /* MCP card */
-    .mcp-card {
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+        }
 
-    .mcp-card input {
-      background: var(--ink);
-      border: 1px solid var(--line);
-    }
+        .message {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            line-height: 1.55;
+            font-size: 0.92rem;
+            word-break: break-word;
+        }
 
-    .connect-btn {
-      width: 100%;
-      padding: 8px;
-      font-size: 0.82rem;
-      font-weight: 500;
-      font-family: var(--sans);
-      border-radius: 6px;
-      cursor: pointer;
-      border: 1px solid var(--teal);
-      background: var(--teal-glow);
-      color: var(--teal);
-      transition: background 0.15s;
-    }
-    .connect-btn:hover { background: rgba(45,212,191,0.2); }
+        .message.user {
+            background: var(--accent);
+            align-self: flex-end;
+            border-bottom-right-radius: 3px;
+        }
 
-    /* Server list */
-    .server-list { display: flex; flex-direction: column; gap: 6px; }
+        .message.assistant {
+            background: var(--bg-mid);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 3px;
+        }
 
-    .server-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px 10px;
-    }
+        .message.system {
+            background: #064e3b;
+            border: 1px solid #065f46;
+            align-self: center;
+            max-width: 95%;
+            font-size: 0.85rem;
+            border-radius: 8px;
+            text-align: center;
+        }
 
-    .server-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: var(--green);
-      flex-shrink: 0;
-    }
+        /* ── INPUT AREA ─────────────────────────────────────────── */
+        .input-area {
+            background: var(--bg-mid);
+            border-top: 1px solid var(--border);
+            padding: 10px 12px;
+            padding-bottom: calc(10px + var(--safe-bottom));
+            flex-shrink: 0;
+        }
 
-    .server-name {
-      flex: 1;
-      font-size: 0.8rem;
-      font-family: var(--mono);
-      color: var(--text-soft);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+        .input-wrapper {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+        }
 
-    .disc-btn {
-      font-size: 0.7rem;
-      padding: 3px 8px;
-      border-radius: 4px;
-      border: 1px solid var(--line);
-      background: none;
-      color: var(--muted);
-      cursor: pointer;
-      font-family: var(--sans);
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .disc-btn:hover { background: rgba(248,81,73,0.12); border-color: var(--red); color: var(--red); }
+        #messageInput {
+            flex: 1;
+            padding: 10px 12px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.95rem;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            line-height: 1.45;
+            overflow-y: auto;
+            transition: border-color 0.15s;
+        }
 
-    /* ── Chat ── */
-    .chat-pane {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      min-width: 0;
-    }
+        .input-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex-shrink: 0;
+        }
 
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 20px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
-      scroll-behavior: smooth;
-    }
+        .action-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            transition: background 0.2s, transform 0.1s;
+            flex-shrink: 0;
+        }
 
-    /* Message bubbles */
-    .msg {
-      display: flex;
-      flex-direction: column;
-      max-width: 82%;
-      gap: 4px;
-    }
+        .action-btn:active {
+            transform: scale(0.92);
+        }
 
-    .msg.user { align-self: flex-end; align-items: flex-end; }
-    .msg.assistant { align-self: flex-start; align-items: flex-start; }
-    .msg.system { align-self: center; max-width: 95%; align-items: center; }
+        .send-btn {
+            background: var(--accent);
+            color: white;
+        }
 
-    .bubble {
-      padding: 10px 14px;
-      border-radius: 12px;
-      font-size: 0.9rem;
-      line-height: 1.6;
-      word-break: break-word;
-    }
+        .send-btn:hover { background: var(--accent-hover); }
+        .send-btn:disabled { background: #475569; cursor: not-allowed; transform: none; }
 
-    .msg.user .bubble {
-      background: var(--teal-dim);
-      color: #fff;
-      border-bottom-right-radius: 3px;
-    }
+        .clear-btn {
+            background: #334155;
+            color: var(--text-muted);
+        }
 
-    .msg.assistant .bubble {
-      background: var(--ink-2);
-      border: 1px solid var(--line);
-      color: var(--text);
-      border-bottom-left-radius: 3px;
-    }
+        .clear-btn:hover { background: #475569; }
 
-    .msg.system .bubble {
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 0.8rem;
-      text-align: center;
-      border-radius: 8px;
-    }
+        /* ── SIDEBAR COMPONENTS ─────────────────────────────────── */
+        .connect-form {
+            background: var(--bg-deep);
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 14px;
+        }
 
-    /* Tool call block */
-    .tool-block {
-      background: var(--ink);
-      border: 1px solid var(--amber);
-      border-left: 3px solid var(--amber);
-      border-radius: 6px;
-      padding: 10px 12px;
-      margin-top: 6px;
-      font-size: 0.8rem;
-      max-width: 100%;
-    }
+        .form-group {
+            margin-bottom: 8px;
+        }
 
-    .tool-name {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      color: var(--amber);
-      font-weight: 500;
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
+        .form-group label {
+            display: block;
+            margin-bottom: 3px;
+        }
 
-    .tool-result {
-      color: var(--text-soft);
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 200px;
-      overflow-y: auto;
-    }
+        .form-group input {
+            width: 100%;
+        }
 
-    /* ── Input ── */
-    .input-zone {
-      background: var(--ink-2);
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      padding-bottom: calc(10px + var(--safe-b));
-      flex-shrink: 0;
-    }
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.88rem;
+            font-family: inherit;
+            transition: background 0.2s;
+            min-height: 36px;
+        }
 
-    /* Mode pills */
-    .mode-strip {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
-    }
+        button:hover { background: var(--accent-hover); }
+        button:disabled { background: #475569; cursor: not-allowed; }
 
-    .mode-pill {
-      font-size: 0.7rem;
-      font-weight: 500;
-      padding: 4px 10px;
-      border-radius: 20px;
-      border: 1px solid var(--line);
-      background: var(--ink-3);
-      color: var(--muted);
-      cursor: pointer;
-      transition: all 0.15s;
-      white-space: nowrap;
-      user-select: none;
-    }
-    .mode-pill:hover { border-color: var(--line-2); color: var(--text-soft); }
-    .mode-pill.selected { border-color: var(--teal); color: var(--teal); background: var(--teal-glow); }
+        .button-small {
+            padding: 4px 10px;
+            font-size: 0.78rem;
+            min-height: 30px;
+        }
 
-    .input-row {
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-    }
+        .danger { background: var(--danger); }
+        .danger:hover { background: var(--danger-hover); }
 
-    #msgInput {
-      flex: 1;
-      background: var(--ink-3);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      color: var(--text);
-      font-family: var(--sans);
-      font-size: 0.92rem;
-      padding: 10px 13px;
-      resize: none;
-      min-height: 44px;
-      max-height: 120px;
-      line-height: 1.5;
-      overflow-y: auto;
-      transition: border-color 0.15s;
-    }
-    #msgInput:focus { outline: none; border-color: var(--teal); }
-    #msgInput::placeholder { color: var(--muted); }
+        .server-item {
+            background: var(--bg-deep);
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
 
-    .send-btn {
-      width: 44px; height: 44px;
-      border-radius: 10px;
-      border: none;
-      background: var(--teal-dim);
-      color: #fff;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.15s, transform 0.1s;
-    }
-    .send-btn:hover { background: var(--teal); }
-    .send-btn:active { transform: scale(0.94); }
-    .send-btn:disabled { background: var(--ink-3); color: var(--muted); cursor: not-allowed; transform: none; }
+        .server-item.active { border: 2px solid var(--accent); }
 
-    .clear-btn {
-      width: 44px; height: 44px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: none;
-      color: var(--muted);
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.15s, color 0.15s;
-    }
-    .clear-btn:hover { background: var(--ink-3); color: var(--text); }
+        .status {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
 
-    /* Spinner */
-    .spinner {
-      width: 16px; height: 16px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.65s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+        .status.connected { background: #22c55e; }
+        .status.disconnected { background: var(--danger); }
 
-    /* Typing cursor */
-    .cursor {
-      display: inline-block;
-      width: 2px; height: 1em;
-      background: var(--teal);
-      margin-left: 2px;
-      vertical-align: text-bottom;
-      animation: blink 0.9s step-end infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-top: 8px;
+        }
 
-    /* ── Mobile sidebar ── */
-    .backdrop {
-      display: none;
-      position: absolute;
-      inset: 0;
-      background: rgba(0,0,0,0.6);
-      z-index: 50;
-    }
+        .status-badge.success { background: var(--success-bg); color: var(--success-text); }
+        .status-badge.error   { background: var(--error-bg);   color: var(--error-text); }
 
-    @media (max-width: 768px) {
-      .sidebar {
-        position: absolute;
-        top: 0; left: 0; bottom: 0;
-        z-index: 60;
-        transform: translateX(-100%);
-        width: min(var(--sidebar-w), 88vw);
-        box-shadow: 6px 0 32px rgba(0,0,0,0.6);
-      }
-      .sidebar.open { transform: translateX(0); }
-      .backdrop.visible { display: block; }
-      .ham-btn { display: flex !important; }
-    }
+        /* ── TOOL CALLS ─────────────────────────────────────────── */
+        .tool-call {
+            background: #422006;
+            border: 1px solid #78350f;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 8px;
+            font-size: 0.82rem;
+        }
 
-    @media (min-width: 769px) {
-      .ham-btn { display: none !important; }
-      .backdrop { display: none !important; }
-    }
+        .tool-call-title {
+            color: #fbbf24;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
 
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
-  </style>
+        .tool-call-content {
+            color: #fde68a;
+            font-family: 'Courier New', monospace;
+        }
+
+        .tool-call-content pre {
+            background: #1c0a00;
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin-top: 5px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .tool-call-section {
+            margin-top: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .tool-call-section strong {
+            display: block;
+            margin-bottom: 4px;
+            color: #fbbf24;
+        }
+
+        /* ── LOADING SPINNER ────────────────────────────────────── */
+        .loading {
+            display: inline-block;
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── DESKTOP: restore sidebar always-visible ────────────── */
+        @media (min-width: 769px) {
+            .sidebar-backdrop { display: none !important; }
+            .hamburger-btn { display: none !important; }
+        }
+    </style>
+
 </head>
 <body>
 
-<!-- ── Top bar ── -->
-<div class="topbar">
-  <button class="icon-btn ham-btn" id="hamBtn" aria-label="Toggle sidebar" style="display:none">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-    </svg>
+    <!-- HEADER -->
+    <div class="header">
+        <div class="header-top">
+            <!-- hamburger: mobile only -->
+            <button class="icon-btn hamburger-btn" id="hamburgerBtn" title="Server settings" aria-label="Toggle sidebar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <line x1="3" y1="6"  x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+
+            <h1>🏥 Medical Decision Support</h1>
+
+            <!-- gear: toggles settings panel -->
+            <button class="icon-btn" id="settingsBtn" title="API settings" aria-label="Toggle settings">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Collapsible settings -->
+        <div class="settings-panel" id="settingsPanel">
+            <div class="settings-inner">
+                <div class="input-group">
+                    <label>Model</label>
+                    <select id="model">
+<option value="qwen/qwen3.6-plus">Qwen 3.6</option>
+                        <option value="anthropic/claude-haiku-4.5">Haiku 4.5</option>
+                        <option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro</option>
+                        
+						<option value="qwen/qwen3.6-flash">Qwen3.6-flash</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>MCP Server</label>
+                    <select id="serverSelect">
+                        <option value="">No tools</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main-container">
+
+        <!-- Sidebar backdrop (mobile tap-to-close) -->
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-scroll">
+                <h2>☁️ Cloudflare AI Search</h2>
+                <div class="connect-form">
+<div id="ragStatus">
+  <div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Initializing…</div>
+</div>
+
+<div style="display:flex;gap:8px;margin-top:10px;">
+  <button id="btnOB" onclick="initAISearch()" style="flex:1;">
+    OB RAG
   </button>
-
-  <div class="topbar-logo">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-    </svg>
-    <span class="topbar-title">Clinical Decision Support</span>
-  </div>
-
-  <div id="ragPill" class="topbar-pill warn">RAG: initialising…</div>
-
-  <button class="icon-btn" id="settingsBtn" aria-label="Toggle settings">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-    </svg>
+  <button id="btnGyn" onclick="initAISearchGyn()" style="flex:1;">
+    Gyne RAG
   </button>
 </div>
 
-<!-- ── Settings drawer ── -->
-<div class="settings-drawer" id="settingsDrawer">
-  <div class="settings-inner">
-    <div class="field">
-      <label>Model</label>
-      <select id="modelSelect">
-        <option value="qwen/qwen3-235b-a22b">Qwen 3 235B</option>
-        <option value="anthropic/claude-haiku-4-5">Claude Haiku 4.5</option>
-        <option value="deepseek/deepseek-r1">DeepSeek R1</option>
-        <option value="qwen/qwen3-30b-a3b">Qwen 3 30B</option>
-        <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Active MCP Server</label>
-      <select id="serverSelect">
-        <option value="">— none —</option>
-      </select>
-    </div>
-  </div>
-</div>
+<p style="margin-top:10px;font-size:0.72rem;color:#64748b;">
+  Active RAG shown above — click to switch
+</p>
+                </div>
 
-<!-- ── Main layout ── -->
-<div class="layout">
+                <h2>🔧 MCP Server</h2>
+                <div class="connect-form">
+                    <div class="form-group">
+                        <label>Server ID</label>
+                        <input type="text" id="serverId" value="gradio-server">
+                    </div>
+                    <div class="form-group">
+                        <label>SSE URL</label>
+						  <input id="serverUrl" list="serverUrlOptions" value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse">
+  <datalist id="serverUrlOptions">
+    <option value="https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse">
+    <option value="https://gjacob2010-mcp-server-r03.hf.space/gradio_api/mcp/sse">
+  </datalist>
+                        
+                    </div>
+                    <button onclick="connectServer()">Connect MCP</button>
+                </div>
 
-  <div class="backdrop" id="backdrop"></div>
-
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-body">
-
-      <!-- RAG section -->
-      <div>
-        <div class="section-label">Knowledge Base</div>
-        <div class="rag-card">
-          <div class="rag-status" id="ragStatus">initialising…</div>
-          <div class="rag-btns">
-            <button class="rag-btn" id="btnOB"  onclick="switchRAG('ob')">OB Guidelines</button>
-            <button class="rag-btn" id="btnGyn" onclick="switchRAG('gyn')">Gynecology</button>
-          </div>
-          <div class="rag-hint">Click to switch the active knowledge base. Current instance shown above.</div>
+                <div id="serverList"></div>
+            </div>
         </div>
-      </div>
 
-      <!-- MCP section -->
-      <div>
-        <div class="section-label">MCP Server</div>
-        <div class="mcp-card">
-          <input type="text" id="serverIdInput" value="gradio-server" placeholder="Server ID">
-          <input type="text" id="serverUrlInput" value="https://gjacob2010-testmcp.hf.space/gradio_api/mcp/" placeholder="MCP URL">
-          <button class="connect-btn" onclick="connectServer()">Connect</button>
-          <div class="rag-hint">Tries streamable-HTTP first, falls back to SSE automatically.</div>
+        <!-- CHAT -->
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <div class="message system">
+                    Welcome to the Medical Decision Support System!<br><br>
+                    <strong>Setup:</strong><br>
+                    1. Tap ⚙️ to enter your OpenRouter API key<br>
+                    2. Cloudflare AI Search RAG initializes automatically<br>
+                    3. Start asking medical questions
+                </div>
+            </div>
+
+            <div class="input-area">
+
+<input type="radio" id="searchGuideline" name ="searchType" value="For the following question only use search_medical_guidelines. Don't use any gradio-server tools.">
+<label> Search Guidelines only
+</label>
+<input type="radio" id="searchMCPTools" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
+<label> Patient Decision Support with best guess about parameters 
+</label>
+<input type="radio" id="searchMCPTools" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, ask the user for more information for parameters">
+<label> Patient Decision Support with follow up questions about parameters
+</label>				
+<input type="radio" id="antenatalMCP" name ="searchType" value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines.  But you can use pregnancy_issue_lookup_tool if you dont find any specific MCP tool. If there are parameters missing, ask the user for more information for parameters.  Dont ever leave a parameter empty.">
+<label> Antenatal Record Support 
+</label>				
+<input type="radio" id="searchAll" name ="searchType" value="For the following question use gradio-server MCP tools and/or search_medical_guidelines. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters">
+<label> Do both 
+</label>
+<input type="radio" id="askLLM" name ="searchType" value="format the results using pretty html. but don't use css or it changes the whole gui. dont change font color or background color. just headings so i can see the results better. This query is just for the chat results that are already present.  Don't use any tools to answer.">
+<label> Format the resuls and hit send again. Or you can add additional instructions to format the results to your liking 
+</label>
+                <div class="input-wrapper">
+			
+                    <textarea id="messageInput"
+                              placeholder="Describe the clinical scenario…"
+                              onkeydown="handleKeyPress(event)"
+                              oninput="autoResize(this)"
+                              rows="1"></textarea>
+                    <div class="input-actions">
+                        <button class="action-btn send-btn" onclick="sendMessage()" id="sendButton" title="Send">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                        <button class="action-btn clear-btn" onclick="clearChat()" title="Clear chat">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11v6M14 11v6"/>
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-
-      <!-- Connected servers -->
-      <div>
-        <div class="section-label">Connected Servers</div>
-        <div class="server-list" id="serverList">
-          <div style="font-size:0.78rem;color:var(--muted)">No servers connected</div>
-        </div>
-      </div>
-
-    </div>
-  </aside>
-
-  <!-- Chat pane -->
-  <main class="chat-pane">
-    <div class="messages" id="messages">
-      <div class="msg system">
-        <div class="bubble">
-          Welcome to Clinical Decision Support<br><br>
-          Connect a knowledge base and optionally an MCP server, then describe your clinical scenario.
-        </div>
-      </div>
     </div>
 
-    <div class="input-zone">
-      <!-- Mode pills -->
-      <div class="mode-strip" id="modeStrip">
-        <div class="mode-pill selected" data-value="" title="Use both RAG and MCP tools">All sources</div>
-        <div class="mode-pill" data-value="For the following question only use search_medical_guidelines. Don't use any gradio-server tools." title="RAG only">Guidelines only</div>
-        <div class="mode-pill" data-value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, please either make the best possible guess using the information given or if that is not possible, ask the user for more information for parameters" title="MCP tools with best-guess parameters">Decision support (guess)</div>
-        <div class="mode-pill" data-value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines or pregnancy_issue_lookup_tool. If there are parameters missing, ask the user for more information for parameters" title="MCP tools, ask for missing info">Decision support (ask)</div>
-        <div class="mode-pill" data-value="For the following question only use gradio-server MCP tools. Don't use search_medical_guidelines. But you can use pregnancy_issue_lookup_tool if you dont find any specific MCP tool. If there are parameters missing, ask the user for more information for parameters. Dont ever leave a parameter empty." title="Antenatal record tools">Antenatal record</div>
-        <div class="mode-pill" data-value="format the results using pretty html. but don't use css or it changes the whole gui. dont change font color or background color. just headings so i can see the results better. This query is just for the chat results that are already present. Don't use any tools to answer." title="Reformat the last response">Format results</div>
-      </div>
+    <script>
+        const API_BASE = '/api';
+	var a = "gradio-server";
+	var b = "https://gjacob2010-mcp-server-r02.hf.space/gradio_api/mcp/sse";
+       // window.addEventListener("load", initAISearch());
+	window.addEventListener("load", refreshServers());
+       // window.addEventListener("load", connectServer(a,b));
+        let conversationMessages = [];
+        let isProcessing = false;
 
-      <div class="input-row">
-        <textarea id="msgInput" rows="1" placeholder="Describe the clinical scenario…" oninput="autoResize(this)" onkeydown="handleKey(event)"></textarea>
-        <button class="clear-btn" onclick="clearChat()" title="Clear chat">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6M14 11v6"/>
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-          </svg>
-        </button>
-        <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  </main>
-</div>
+        // ── UI TOGGLES ───────────────────────────────────────────
 
-<script>
-  // ── State ──────────────────────────────────────────────────────────────
-  let conversationMessages = [];
-  let isProcessing = false;
-  let selectedMode = '';
+        const hamburgerBtn  = document.getElementById('hamburgerBtn');
+        const sidebar       = document.getElementById('sidebar');
+        const backdrop      = document.getElementById('sidebarBackdrop');
+        const settingsBtn   = document.getElementById('settingsBtn');
+        const settingsPanel = document.getElementById('settingsPanel');
 
-  // ── DOM refs ───────────────────────────────────────────────────────────
-  const hamBtn        = document.getElementById('hamBtn');
-  const sidebar       = document.getElementById('sidebar');
-  const backdrop      = document.getElementById('backdrop');
-  const settingsBtn   = document.getElementById('settingsBtn');
-  const settingsDrawer= document.getElementById('settingsDrawer');
-  const ragPill       = document.getElementById('ragPill');
-  const ragStatus     = document.getElementById('ragStatus');
-  const serverList    = document.getElementById('serverList');
-  const serverSelect  = document.getElementById('serverSelect');
-  const messages      = document.getElementById('messages');
-  const msgInput      = document.getElementById('msgInput');
-  const sendBtn       = document.getElementById('sendBtn');
+        hamburgerBtn.addEventListener('click', () => {
+            const open = sidebar.classList.toggle('open');
+            backdrop.classList.toggle('visible', open);
+            hamburgerBtn.classList.toggle('active', open);
+        });
 
-  // ── Sidebar toggle ─────────────────────────────────────────────────────
-  hamBtn.addEventListener('click', () => toggleSidebar());
-  backdrop.addEventListener('click', () => toggleSidebar(false));
-  function toggleSidebar(force) {
-    const open = force !== undefined ? force : !sidebar.classList.contains('open');
-    sidebar.classList.toggle('open', open);
-    backdrop.classList.toggle('visible', open);
-    hamBtn.classList.toggle('active', open);
-  }
+        backdrop.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            backdrop.classList.remove('visible');
+            hamburgerBtn.classList.remove('active');
+        });
 
-  settingsBtn.addEventListener('click', () => {
-    settingsDrawer.classList.toggle('open');
-    settingsBtn.classList.toggle('active');
-  });
+        settingsBtn.addEventListener('click', () => {
+            settingsPanel.classList.toggle('open');
+            settingsBtn.classList.toggle('active');
+        });
 
-  // ── Mode pills ─────────────────────────────────────────────────────────
-  document.getElementById('modeStrip').addEventListener('click', e => {
-    const pill = e.target.closest('.mode-pill');
-    if (!pill) return;
-    document.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('selected'));
-    pill.classList.add('selected');
-    selectedMode = pill.dataset.value;
-  });
+        // ── TEXTAREA AUTO-RESIZE ─────────────────────────────────
 
-  // ── Textarea auto-resize ───────────────────────────────────────────────
-  function autoResize(el) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-  }
-
-  function handleKey(e) {
-    const mobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-    if (!mobile && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  }
-
-  // ── DOM helpers ────────────────────────────────────────────────────────
-  function scrollBottom() { messages.scrollTop = messages.scrollHeight; }
-
-  function addSysMsg(text) {
-    const d = document.createElement('div');
-    d.className = 'msg system';
-    d.innerHTML = `<div class="bubble">${text}</div>`;
-    messages.appendChild(d);
-    scrollBottom();
-  }
-
-  function buildToolBlock(toolName, displayResult) {
-    const d = document.createElement('div');
-    d.className = 'tool-block';
-    d.innerHTML = `
-      <div class="tool-name">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-        ${toolName}
-      </div>
-      <div class="tool-result">${displayResult || ''}</div>`;
-    return d;
-  }
-
-  // ── RAG ────────────────────────────────────────────────────────────────
-  async function switchRAG(which) {
-    ragStatus.textContent = 'connecting…';
-    ragStatus.className = 'rag-status';
-    ragPill.className = 'topbar-pill warn';
-    ragPill.textContent = 'RAG: connecting…';
-
-    try {
-      const endpoint = which === 'gyn' ? '/api/aisearch/initGyn' : '/api/aisearch/init';
-      const res  = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      const label = which === 'gyn' ? `Gynecology (${data.instanceName})` : `OB Guidelines (${data.instanceName})`;
-      ragStatus.textContent = `● ${label}`;
-      ragStatus.className = 'rag-status ok';
-      ragPill.className = 'topbar-pill ready';
-      ragPill.textContent = `RAG: ${which === 'gyn' ? 'GYN' : 'OB'}`;
-
-      document.getElementById('btnOB').classList.toggle('active',  which === 'ob');
-      document.getElementById('btnGyn').classList.toggle('active', which === 'gyn');
-      addSysMsg(`Switched to <strong>${label}</strong> knowledge base`);
-    } catch (err) {
-      ragStatus.textContent = `✕ ${err.message}`;
-      ragStatus.className = 'rag-status err';
-      ragPill.textContent = 'RAG: error';
-    }
-  }
-
-  // ── MCP ────────────────────────────────────────────────────────────────
-  async function connectServer() {
-    const serverId = document.getElementById('serverIdInput').value.trim();
-    const url      = document.getElementById('serverUrlInput').value.trim();
-    if (!serverId || !url) { addSysMsg('Please enter both Server ID and URL.'); return; }
-
-    addSysMsg(`Connecting to <strong>${serverId}</strong>…`);
-    try {
-      const res  = await fetch('/api/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId, url })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      addSysMsg(`Connected to <strong>${serverId}</strong> via ${data.transportType}`);
-      await refreshServers();
-      if (window.innerWidth <= 768) toggleSidebar(false);
-    } catch (err) {
-      addSysMsg(`Connection failed: ${err.message}`);
-    }
-  }
-
-  async function disconnectServer(id) {
-    try {
-      await fetch(`/api/servers/${id}`, { method: 'DELETE' });
-      addSysMsg(`Disconnected from <strong>${id}</strong>`);
-      await refreshServers();
-    } catch (err) {
-      addSysMsg(`Error: ${err.message}`);
-    }
-  }
-
-  async function refreshServers() {
-    try {
-      const res  = await fetch('/api/servers');
-      const data = await res.json();
-      const ids  = data.servers || [];
-
-      if (ids.length === 0) {
-        serverList.innerHTML = '<div style="font-size:0.78rem;color:var(--muted)">No servers connected</div>';
-        serverSelect.innerHTML = '<option value="">— none —</option>';
-        return;
-      }
-
-      serverList.innerHTML = ids.map(id => `
-        <div class="server-row">
-          <div class="server-dot"></div>
-          <div class="server-name">${id}</div>
-          <button class="disc-btn" onclick="disconnectServer('${id}')">disconnect</button>
-        </div>`).join('');
-
-      const prev = serverSelect.value;
-      serverSelect.innerHTML = '<option value="">— none —</option>' +
-        ids.map(id => `<option value="${id}"${id === prev ? ' selected' : ''}>${id}</option>`).join('');
-    } catch {}
-  }
-
-  // ── Chat ───────────────────────────────────────────────────────────────
-  async function sendMessage() {
-    if (isProcessing) return;
-    const text = msgInput.value.trim();
-    if (!text) return;
-
-    const fullMsg = text + (selectedMode ? '\n' + selectedMode : '');
-    const model    = document.getElementById('modelSelect').value;
-    const serverId = serverSelect.value || null;
-
-    // User bubble
-    const userDiv = document.createElement('div');
-    userDiv.className = 'msg user';
-    userDiv.innerHTML = `<div class="bubble">${escHtml(text)}</div>`;
-    messages.appendChild(userDiv);
-    scrollBottom();
-
-    conversationMessages.push({ role: 'user', content: fullMsg });
-    msgInput.value = '';
-    msgInput.style.height = 'auto';
-
-    isProcessing = true;
-    sendBtn.disabled = true;
-    sendBtn.innerHTML = '<div class="spinner"></div>';
-
-    // Assistant bubble (live)
-    const aDiv = document.createElement('div');
-    aDiv.className = 'msg assistant';
-    const aBubble = document.createElement('div');
-    aBubble.className = 'bubble';
-    aBubble.innerHTML = '<span class="cursor"></span>';
-    aDiv.appendChild(aBubble);
-    messages.appendChild(aDiv);
-    scrollBottom();
-
-    let content       = '';
-    let toolResultsUI = [];
-
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: conversationMessages, model, serverId })
-      });
-      if (!res.ok) throw new Error('API request failed');
-
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split('\n\n');
-        buf = parts.pop();
-
-        for (const chunk of parts) {
-          if (!chunk.startsWith('event: ')) continue;
-          const [eLine, dLine] = chunk.split('\n');
-          const event = eLine.slice(7);
-          let data;
-          try { data = JSON.parse(dLine.slice(6)); } catch { continue; }
-
-          if (event === 'content') {
-            content += data.content;
-            aBubble.innerHTML = content + '<span class="cursor"></span>';
-            scrollBottom();
-
-          } else if (event === 'tool_calls_start') {
-            addSysMsg(`Searching ${data.count} source${data.count > 1 ? 's' : ''}…`);
-
-          } else if (event === 'tool_call') {
-            addSysMsg(`Calling <code style="font-family:var(--mono);font-size:0.78rem">${data.tool}</code>`);
-
-          } else if (event === 'tool_result') {
-            toolResultsUI.push({ tool: data.tool, displayResult: data.displayResult, rawResult: data.rawResult });
-            aBubble.appendChild(buildToolBlock(data.tool, data.displayResult));
-            scrollBottom();
-
-          } else if (event === 'tool_calls_end') {
-            // Next assistant message goes in a fresh bubble
-            content = '';
-            toolResultsUI = [];
-            const newBubble = document.createElement('div');
-            newBubble.className = 'bubble';
-            newBubble.innerHTML = '<span class="cursor"></span>';
-            aDiv.appendChild(newBubble);
-            // Point aBubble ref to new one
-            Object.defineProperty({ aBubble }, 'aBubble', { value: newBubble });
-            // Reassign via closure trick
-            aBubble.classList.add('_done');
-            aDiv.lastElementChild.classList.add('_live');
-            scrollBottom();
-
-          } else if (event === 'done') {
-            conversationMessages = data.conversationMessages;
-
-          } else if (event === 'error') {
-            addSysMsg(`Error: ${data.message}`);
-          }
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
         }
-      }
 
-      // Remove final cursor
-      aDiv.querySelectorAll('.cursor').forEach(c => c.remove());
+        // ── RAG / MCP ────────────────────────────────────────────
 
-    } catch (err) {
-      addSysMsg(`Error: ${err.message}`);
-      aDiv.querySelectorAll('.cursor').forEach(c => c.remove());
-    } finally {
-      isProcessing = false;
-      sendBtn.disabled = false;
-      sendBtn.innerHTML = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+       async function initAISearch() {
+  const statusDiv = document.getElementById('ragStatus');
+  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+
+  try {
+    const response = await fetch('/api/aisearch/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: OB Guidelines (${data.instanceName})</div>`;
+      // highlight active button
+      document.getElementById('btnOB').style.outline  = '2px solid #22c55e';
+      document.getElementById('btnGyn').style.outline = 'none';
+      addSystemMessage('✅ Switched to OB Guidelines RAG');
+    } else {
+      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
     }
+  } catch (error) {
+    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
   }
+}
 
-  function clearChat() {
-    conversationMessages = [];
-    messages.innerHTML = '<div class="msg system"><div class="bubble">Chat cleared.</div></div>';
-  }
+async function initAISearchGyn() {
+  const statusDiv = document.getElementById('ragStatus');
+  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
 
-  function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
+  try {
+    const response = await fetch('/api/aisearch/initGyn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
 
-  // ── Init ───────────────────────────────────────────────────────────────
-  (async () => {
-    await refreshServers();
-    // Auto-init OB RAG
-    try {
-      const res  = await fetch('/api/aisearch/init', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      const data = await res.json();
-      if (res.ok) {
-        ragStatus.textContent = `● OB Guidelines (${data.instanceName})`;
-        ragStatus.className = 'rag-status ok';
-        ragPill.className = 'topbar-pill ready';
-        ragPill.textContent = 'RAG: OB';
-        document.getElementById('btnOB').classList.add('active');
-      } else {
-        ragStatus.textContent = `✕ ${data.error}`;
-        ragStatus.className = 'rag-status err';
-        ragPill.textContent = 'RAG: error';
-      }
-    } catch {
-      ragStatus.textContent = '✕ Could not connect';
-      ragStatus.className = 'rag-status err';
+    if (response.ok) {
+      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: Gynecology (${data.instanceName})</div>`;
+      // highlight active button
+      document.getElementById('btnGyn').style.outline  = '2px solid #22c55e';
+      document.getElementById('btnOB').style.outline   = 'none';
+      addSystemMessage('✅ Switched to Gynecology RAG');
+    } else {
+      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
     }
-  })();
-</script>
+  } catch (error) {
+    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+  }
+}
+
+        async function connectServer() {
+            const serverId = document.getElementById('serverId').value;
+            const url      = document.getElementById('serverUrl').value;
+             // const serverId = a;
+             // const url      = b;
+
+            if (!serverId || !url) {
+                addSystemMessage('Please provide both Server ID and URL');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/servers`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ serverId, type: 'sse', url })
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    addSystemMessage(`✅ Connected to ${serverId}`);
+                    await refreshServers();
+                    if (window.innerWidth <= 768) {
+                        sidebar.classList.remove('open');
+                        backdrop.classList.remove('visible');
+                        hamburgerBtn.classList.remove('active');
+                    }
+                } else {
+                    addSystemMessage(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                addSystemMessage(`Error: ${error.message}`);
+
+            }
+        }
+
+        async function refreshServers() {
+            try {
+                const response   = await fetch(`${API_BASE}/servers`);
+                const data       = await response.json();
+                const serverList = document.getElementById('serverList');
+                const serverSelect = document.getElementById('serverSelect');
+
+                if (data.servers.length === 0) {
+                    serverList.innerHTML = '<p style="color:#94a3b8;font-size:0.88rem;">No servers connected</p>';
+                    serverSelect.innerHTML = '<option value="">No tools</option>';
+                    return;
+                }
+
+                serverList.innerHTML = data.servers.map(s => `
+                    <div class="server-item">
+                        <span style="display:flex;align-items:center;min-width:0;">
+                            <span class="status connected"></span>
+                            <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s}</strong>
+                        </span>
+                        <button class="button-small danger" onclick="disconnectServer('${s}')">✕</button>
+                    </div>`).join('');
+
+                /*serverSelect.innerHTML = '<option value="">No tools</option>' +
+                    data.servers.map(s => `<option value="${s}">${s}</option>`).join('');*/
+serverSelect.innerHTML = data.servers.map(s => `<option value="${s}">${s}</option>`).join('');
+
+            } catch (error) {
+                console.error('Error loading servers:', error);
+            }
+        }
+
+        async function disconnectServer(serverId) {
+            try {
+                const response = await fetch(`${API_BASE}/servers/${serverId}`, { method: 'DELETE' });
+                if (response.ok) {
+                    addSystemMessage(`Disconnected from ${serverId}`);
+                    refreshServers();
+                }
+            } catch (error) {
+                addSystemMessage(`Error: ${error.message}`);
+            }
+        }
+
+        // ── MESSAGES ─────────────────────────────────────────────
+
+        function addMessage(role, content, toolCalls = null) {
+            const messagesDiv  = document.getElementById('messages');
+            const messageDiv   = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            if (typeof content === 'string') {
+                messageDiv.innerHTML = content;
+            } else {
+                messageDiv.innerHTML = '<pre>' + JSON.stringify(content, null, 2) + '</pre>';
+            }
+
+            if (toolCalls && toolCalls.length > 0) {
+                toolCalls.forEach(tc => {
+                    messageDiv.appendChild(buildToolDiv(tc.tool, tc.displayResult, tc.rawResult));
+                });
+            }
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const messagesDiv = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'message system';
+            div.innerHTML = text;
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function buildToolDiv(tool, displayResult, rawResult) {
+            const toolDiv = document.createElement('div');
+            toolDiv.className = 'tool-call';
+
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'tool-call-title';
+            titleDiv.textContent = `🔧 ${tool}`;
+            toolDiv.appendChild(titleDiv);
+
+            const resultSection = document.createElement('div');
+            resultSection.className = 'tool-call-section';
+            const resultLabel = document.createElement('strong');
+            resultLabel.textContent = 'Result:';
+            resultSection.appendChild(resultLabel);
+            const resultPre = document.createElement('pre');
+            resultPre.textContent = displayResult || JSON.stringify(rawResult, null, 2);
+            resultSection.appendChild(resultPre);
+            toolDiv.appendChild(resultSection);
+
+            return toolDiv;
+        }
+
+        // ── SEND MESSAGE ─────────────────────────────────────────
+
+        async function sendMessage() {
+            if (isProcessing) return;
+	    var selectedRadio = document.querySelector('input[name="searchType"]:checked');	
+            const input     = document.getElementById('messageInput');
+            //const apiKey    = document.getElementById('apiKey').value;
+            const model     = document.getElementById('model').value;
+            const serverId  = document.getElementById('serverSelect').value || null;
+            const message   = input.value.trim() + selectedRadio.value;
+            
+
+            if (!message) return;
+            
+            addMessage('user', message);
+            conversationMessages.push({ role: 'user', content: message });
+            input.value = '';
+            input.style.height = 'auto';
+            isProcessing = true;
+
+            const sendButton = document.getElementById('sendButton');
+            sendButton.disabled = true;
+            sendButton.innerHTML = '<span class="loading"></span>';
+
+            const messagesDiv = document.getElementById('messages');
+            let assistantMessageDiv = document.createElement('div');
+            assistantMessageDiv.className = 'message assistant';
+            messagesDiv.appendChild(assistantMessageDiv);
+
+            let currentContent      = '';
+            let currentToolResults  = [];
+
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages: conversationMessages, model, serverId })
+                });
+
+                if (!response.ok) throw new Error('API request failed');
+
+                const reader  = response.body.getReader();
+                const decoder = new TextDecoder();
+				let streamBuffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    streamBuffer += decoder.decode(value, { stream: true });
+                    const parts = streamBuffer.split('\n\n');
+streamBuffer = parts.pop();
+                    for (const line of parts) {
+                        if (!line.startsWith('event: ')) continue;
+
+                        const [eventLine, dataLine] = line.split('\n');
+                        const event = eventLine.slice(7);
+                        const data  = JSON.parse(dataLine.slice(6));
+
+                        if (event === 'content') {
+                            currentContent += data.content;
+                            assistantMessageDiv.innerHTML = currentContent;
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+                        } else if (event === 'tool_calls_start') {
+                            addSystemMessage(`🔍 Searching ${data.count} source(s)…`);
+
+                        } else if (event === 'tool_call') {
+                            addSystemMessage(`📚 Calling: ${data.tool}`);
+
+                        } else if (event === 'tool_result') {
+                            currentToolResults.push({
+                                tool: data.tool, arguments: data.arguments,
+                                rawResult: data.rawResult, displayResult: data.displayResult
+                            });
+                            assistantMessageDiv.appendChild(
+                                buildToolDiv(data.tool, data.displayResult, data.rawResult)
+                            );
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+                        } else if (event === 'tool_calls_end') {
+                            currentContent = '';
+                            assistantMessageDiv.textContent = '';
+                            currentToolResults.forEach(tc => {
+                                assistantMessageDiv.appendChild(
+                                    buildToolDiv(tc.tool, tc.displayResult, tc.rawResult)
+                                );
+                            });
+                            const finalDiv = document.createElement('div');
+                            finalDiv.className = 'message assistant';
+                            messagesDiv.appendChild(finalDiv);
+                            assistantMessageDiv = finalDiv;
+
+                        } else if (event === 'done') {
+                            conversationMessages = data.conversationMessages;
+
+                        } else if (event === 'error') {
+                            addSystemMessage(`Error: ${data.message}`);
+                        }
+                    }
+                }
+
+            } catch (error) {
+                addSystemMessage(`Error: ${error.message}`);
+                console.error('Chat error:', error);
+            } finally {
+                isProcessing = false;
+                sendButton.disabled = false;
+                sendButton.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+            }
+        }
+
+        function handleKeyPress(event) {
+            // On desktop: Enter sends, Shift+Enter inserts newline
+            // On mobile: never intercept Enter (let the keyboard handle it naturally)
+            const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+            if (!isMobile && event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function clearChat() {
+            conversationMessages = [];
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '<div class="message system">Chat cleared. Start a new conversation!</div>';
+        }
+
+        refreshServers();
+    </script>
 </body>
 </html>
