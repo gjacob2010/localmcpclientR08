@@ -535,6 +535,11 @@
   <button id="btnGyn" onclick="initAISearchGyn()" style="flex:1;">
     Gyne RAG
   </button>
+
+	  <button id="btnSMFM" onclick="initAISearchSMFM()" style="flex:1;">
+    SMFM RAG
+  </button>
+
 </div>
 
 <p style="margin-top:10px;font-size:0.72rem;color:#64748b;">
@@ -708,8 +713,9 @@ async function initAISearchGyn() {
     if (response.ok) {
       statusDiv.innerHTML = `<div class="status-badge success">✅ Active: Gynecology (${data.instanceName})</div>`;
       // highlight active button
-      document.getElementById('btnGyn').style.outline  = '2px solid #22c55e';
+     
       document.getElementById('btnOB').style.outline   = 'none';
+      document.getElementById('btnGyn').style.outline   = '2px solid #22c55e';
       addSystemMessage('✅ Switched to Gynecology RAG');
     } else {
       statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
@@ -719,6 +725,32 @@ async function initAISearchGyn() {
   }
 }
 
+async function initAISearchSMFM() {
+  const statusDiv = document.getElementById('ragStatus');
+  statusDiv.innerHTML = '<div class="status-badge" style="background:#1e3a5f;color:#93c5fd;">⏳ Connecting…</div>';
+
+  try {
+    const response = await fetch('/api/aisearch/initSMFM', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      statusDiv.innerHTML = `<div class="status-badge success">✅ Active: SMFM (${data.instanceName})</div>`;
+      // highlight active button
+      document.getElementById('btnGyn').style.outline  = 'none';
+      document.getElementById('btnOB').style.outline   = 'none';
+		document.getElementById('btnSMFM').style.outline   = '2px solid #22c55e';
+      addSystemMessage('✅ Switched to SMFM RAG');
+    } else {
+      statusDiv.innerHTML = `<div class="status-badge error">❌ ${data.error}</div>`;
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<div class="status-badge error">❌ Connection failed</div>';
+  }
+}
+		
         async function connectServer() {
             const serverId = document.getElementById('serverId').value;
             const url      = document.getElementById('serverUrl').value;
