@@ -91,6 +91,41 @@ async function initAISearchGyn() {
   }
 }
 
+async function initAISearchSMFM() {
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN) {
+    throw new Error('Missing Cloudflare AI Search credentials in .env file');
+  }
+
+  const SMFM_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/smfm`;
+
+  try {
+    const response = await fetch(`${SMFM_URL}/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CF_API_TOKEN}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'test' }],
+        ai_search_options: { retrieval: { max_num_results: 1 } }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(`AI Search connection failed: ${JSON.stringify(err.errors)}`);
+    }
+
+    aiSearchReady = true;
+    activeSearchUrl = SMFM_URL;
+    console.log('Cloudflare AI Search SMFM initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('AI Search init error:', error);
+    throw error;
+  }
+}
+
 
 async function queryAISearch(question) {
   if (!aiSearchReady) {
@@ -213,6 +248,21 @@ app.post('/api/aisearch/initGyn', async (req, res) => {
     res.json({ 
       success: true, 
       instanceName: 'gyne1',
+      message: 'Cloudflare AI Search initialized'
+    });
+  } catch (error) {
+    console.error('AI Search init error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+//initialize smfm cloudflare ai search
+app.post('/api/aisearch/initSMFM', async (req, res) => {
+  try {
+    await initAISearchSMFM();
+    res.json({ 
+      success: true, 
+      instanceName: 'smfm',
       message: 'Cloudflare AI Search initialized'
     });
   } catch (error) {
