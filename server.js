@@ -96,7 +96,7 @@ async function initAISearchSMFM() {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
-  const SMFM_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/smfm`;
+  const SMFM_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai-search/instances/smfm-guidelines`;
 
   try {
     const response = await fetch(`${SMFM_URL}/search`, {
@@ -262,7 +262,7 @@ app.post('/api/aisearch/initSMFM', async (req, res) => {
     await initAISearchSMFM();
     res.json({ 
       success: true, 
-      instanceName: 'smfm',
+      instanceName: 'smfm-guidelines',
       message: 'Cloudflare AI Search initialized'
     });
   } catch (error) {
