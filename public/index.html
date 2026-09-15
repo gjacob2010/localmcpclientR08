@@ -774,7 +774,9 @@ async function initAISearchSMFM() {
                 const data = await response.json();
 
                 if (response.ok) {
-                    addSystemMessage(`✅ Connected to ${serverId}`);
+                    // The server auto-generates a unique ID (e.g. "gradio-server-a1b2c3d4")
+                    // so that multiple windows/devices don't collide on the same connection.
+                    addSystemMessage(`✅ Connected to ${data.serverId}`);
                     await refreshServers();
                     if (window.innerWidth <= 768) {
                         sidebar.classList.remove('open');
