@@ -3,6 +3,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
+
 dotenv.config();
 
 const app = express();
@@ -11,6 +13,7 @@ app.use(express.static('public'));
 
 // Store MCP client instances
 const mcpClients = new Map();
+const connectionTimestamps = new Map();
 
 // Cloudflare AI Search configuration
 const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -125,7 +128,6 @@ async function initAISearchSMFM() {
     throw error;
   }
 }
-
 
 async function queryAISearch(question) {
   if (!aiSearchReady) {
@@ -271,22 +273,41 @@ app.post('/api/aisearch/initSMFM', async (req, res) => {
   }
 });
 
-// Connect to a new MCP server
+// Connect to a new MCP server (auto-generates unique ID so multiple
+// windows/devices can each hold their own connection without colliding)
 app.post('/api/servers', async (req, res) => {
   try {
     const { serverId, type, url, command, args, env } = req.body;
-    
-if (mcpClients.has(serverId)) {
-  try {
-    await mcpClients.get(serverId).close();
-    mcpClients.delete(serverId);
-    console.log(`Closed existing connection for ${serverId} before reconnecting`);
-  } catch (e) {
-    console.error(`Error closing old connection for ${serverId}:`, e);
-    mcpClients.delete(serverId); // delete it anyway
-  }
-}
 
+    if (!serverId) {
+      return res.status(400).json({ error: 'serverId is required' });
+    }
+
+    // Generate a unique server ID per connection request
+    const uniqueServerId = `${serverId}-${crypto.randomBytes(4).toString('hex')}`;
+
+    if (type === 'sse') {
+      if (!url) {
+        return res.status(400).json({ error: 'url is required for sse connections' });
+      }
+      await connectToSSEServer(uniqueServerId, url);
+    } else if (type === 'stdio') {
+      await connectToStdioServer(uniqueServerId, { command, args, env });
+    } else {
+      return res.status(400).json({ error: 'Invalid server type. Use "sse" or "stdio"' });
+    }
+
+    connectionTimestamps.set(uniqueServerId, Date.now());
+
+    res.json({ success: true, serverId: uniqueServerId });
+  } catch (error) {
+    console.error('Connection error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Explicit reconnect endpoint: closes any existing connection for the given
+// serverId and opens a fresh one under that same id.
 app.post('/api/servers/:serverId/reconnect', async (req, res) => {
   try {
     const { serverId } = req.params;
@@ -295,20 +316,9 @@ app.post('/api/servers/:serverId/reconnect', async (req, res) => {
     if (mcpClients.has(serverId)) {
       await mcpClients.get(serverId).close().catch(() => {});
       mcpClients.delete(serverId);
+      connectionTimestamps.delete(serverId);
     }
 
-    if (type === 'sse') {
-      await connectToSSEServer(serverId, url);
-    } else if (type === 'stdio') {
-      await connectToStdioServer(serverId, { command, args, env });
-    }
-
-    res.json({ success: true, serverId });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-    
     if (type === 'sse') {
       await connectToSSEServer(serverId, url);
     } else if (type === 'stdio') {
@@ -317,9 +327,11 @@ app.post('/api/servers/:serverId/reconnect', async (req, res) => {
       return res.status(400).json({ error: 'Invalid server type. Use "sse" or "stdio"' });
     }
 
+    connectionTimestamps.set(serverId, Date.now());
+
     res.json({ success: true, serverId });
   } catch (error) {
-    console.error('Connection error:', error);
+    console.error('Reconnect error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -342,6 +354,7 @@ app.delete('/api/servers/:serverId', async (req, res) => {
 
     await client.close();
     mcpClients.delete(serverId);
+    connectionTimestamps.delete(serverId);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -475,13 +488,14 @@ Always use these tools before responding to any medical query.`
       const reader = openRouterResponse.body.getReader();
       const decoder = new TextDecoder();
       let streamBuffer = '';
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         streamBuffer += decoder.decode(value, { stream: true });
         const lines = streamBuffer.split('\n');
-streamBuffer = lines.pop();
+        streamBuffer = lines.pop();
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -795,6 +809,29 @@ app.get('/api/health', (req, res) => {
 initAISearch()
   .then(() => console.log('AI Search ready'))
   .catch(err => console.error('AI Search init failed on startup:', err.message));
+
+// Periodically clean up stale MCP connections (older than 2 hours) so that
+// mcpClients doesn't grow unbounded as multiple devices connect over time.
+setInterval(async () => {
+  const now = Date.now();
+  const maxAge = 2 * 60 * 60 * 1000; // 2 hours
+
+  for (const [id, timestamp] of connectionTimestamps.entries()) {
+    if (now - timestamp > maxAge) {
+      const client = mcpClients.get(id);
+      if (client) {
+        try {
+          await client.close();
+          console.log(`Cleaned up stale connection: ${id}`);
+        } catch (e) {
+          console.error(`Error closing stale connection ${id}:`, e);
+        }
+        mcpClients.delete(id);
+      }
+      connectionTimestamps.delete(id);
+    }
+  }
+}, 30 * 60 * 1000); // Check every 30 minutes
 
 // Cleanup on shutdown
 process.on('SIGTERM', async () => {
