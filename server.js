@@ -25,12 +25,10 @@ let aiSearchReady = false;
 let activeSearchUrl = CF_AI_SEARCH_URL;
 
 async function initAISearch() {
-  // Validate credentials are present
   if (!CF_ACCOUNT_ID || !CF_AI_SEARCH_NAME || !CF_API_TOKEN) {
     throw new Error('Missing Cloudflare AI Search credentials in .env file');
   }
 
-  // Test connection by doing a lightweight search
   try {
     const response = await fetch(`${CF_AI_SEARCH_URL}/search`, {
       method: 'POST',
@@ -50,7 +48,7 @@ async function initAISearch() {
     }
 
     aiSearchReady = true;
-    activeSearchUrl = CF_AI_SEARCH_URL; 
+    activeSearchUrl = CF_AI_SEARCH_URL;
     console.log('Cloudflare AI Search initialized successfully');
     return true;
   } catch (error) {
@@ -158,14 +156,12 @@ async function queryAISearch(question) {
 
   const data = await response.json();
 
-  // Return in a format compatible with the rest of the app
   return {
     textResponse: data.choices?.[0]?.message?.content || null,
     sources: data.chunks?.map(c => c.item?.key) || []
   };
 }
 
-// Connect to an MCP server (SSE)
 async function connectToSSEServer(serverId, url) {
   const client = new Client({
     name: 'mcp-openrouter-client',
@@ -181,11 +177,10 @@ async function connectToSSEServer(serverId, url) {
   const transport = new SSEClientTransport(new URL(url));
   await client.connect(transport);
   mcpClients.set(serverId, client);
-  
+
   return client;
 }
 
-// Connect to an MCP server (stdio)
 async function connectToStdioServer(serverId, config) {
   const client = new Client({
     name: 'mcp-openrouter-client',
@@ -206,8 +201,258 @@ async function connectToStdioServer(serverId, config) {
 
   await client.connect(transport);
   mcpClients.set(serverId, client);
-  
+
   return client;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Jev
+//
+// Jev is used in exactly ONE place: once a tool call has been decided on
+// (by the LLM, via ordinary function-calling — see /api/chat below), Jev
+// resolves that tool's enum/gateway parameters from the conversation
+// (askJevResolveToolParams). It never picks WHICH tool to call — that is
+// entirely the LLM's decision, offered every tool in the catalog (minus
+// write tools if POST_TOOL_MODE is 'off') in a standard 'auto' round.
+//
+// Jev runs once per tool call that has enum parameters, right before that
+// call executes. Free-text arguments are filled by the LLM as normal;
+// Jev only ever overrides the enum/gateway ones, and only when confident.
+// ════════════════════════════════════════════════════════════════════════
+
+async function askJev(state, questions) {
+  const response = await fetch('https://api.typesafe.ai/v1/systemone', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.TYPESAFE_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'jev-latest',
+      state,
+      questions
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Jev API error: ${err}`);
+  }
+
+  return response.json();
+}
+
+// Minimum confidence Jev must have when resolving ONE gateway/enum
+// parameter. A parameter that doesn't clear this is NOT guessed at — if
+// it's REQUIRED, the tool call is skipped and turned into a direct
+// clarifying note to the clinician instead (see askJevResolveToolParams
+// and its call site in /api/chat).
+const PARAM_RESOLUTION_CONFIDENCE_THRESHOLD = parseFloat(
+  process.env.PARAM_RESOLUTION_CONFIDENCE_THRESHOLD || '0.2'
+);
+
+// A tool call that ERRORS on execution is retried up to this many times
+// with the same arguments. This is the only reason a tool call runs more
+// than once.
+const MAX_FAILED_ATTEMPTS = 2;
+
+// The LLM can call tools, see their results, and call more tools in
+// response, same as any normal agentic tool-use loop. This caps how many
+// such rounds happen before Claude is forced to answer with no tools
+// offered, so a model that keeps calling tools can't loop forever.
+const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || '4', 10);
+
+// What happens with POST / write tools:
+//   'llm' (default): offered to the LLM alongside read tools, every round.
+//   'off':            write tools are never offered at all.
+const POST_TOOL_MODE = (process.env.POST_TOOL_MODE || 'llm').toLowerCase();
+
+// ── Read vs POST detection (used only to gate write tools out entirely
+//    when POST_TOOL_MODE is 'off' — read/write no longer changes how a
+//    tool gets selected, since the LLM picks every tool itself) ─────────
+const parseList = (v) => (v || '').split(',').map(s => s.trim()).filter(Boolean);
+const READ_TOOL_OVERRIDES = new Set(parseList(process.env.READ_TOOLS));
+const POST_TOOL_OVERRIDES = new Set(parseList(process.env.POST_TOOLS));
+
+const WRITE_NAME_VERBS = new Set([
+  'post', 'put', 'patch', 'delete', 'create', 'update', 'insert', 'submit', 'send',
+  'save', 'write', 'add', 'remove', 'upload', 'register', 'cancel', 'modify', 'edit',
+  'order', 'book', 'schedule'
+]);
+const READ_NAME_VERBS = new Set([
+  'get', 'list', 'search', 'find', 'fetch', 'read', 'lookup', 'retrieve', 'query',
+  'calculate', 'compute', 'check', 'estimate', 'predict', 'assess', 'classify',
+  'score', 'show', 'view', 'describe', 'explain'
+]);
+
+function classifyTool(tool) {
+  const name = tool.name || '';
+  const text = `${name}\n${tool.description || ''}`;
+
+  if (POST_TOOL_OVERRIDES.has(name)) return { kind: 'write', reason: 'POST_TOOLS override' };
+  if (READ_TOOL_OVERRIDES.has(name)) return { kind: 'read', reason: 'READ_TOOLS override' };
+
+  const ann = tool.annotations || {};
+  if (ann.destructiveHint === true) return { kind: 'write', reason: 'annotation destructiveHint' };
+  if (ann.readOnlyHint === true) return { kind: 'read', reason: 'annotation readOnlyHint' };
+
+  const hasWriteVerb = /\b(POST|PUT|PATCH|DELETE)\b/.test(text);
+  const hasGet = /\bGET\b/.test(text);
+  if (hasWriteVerb && !hasGet) return { kind: 'write', reason: 'HTTP write verb in name/description' };
+  if (hasGet && !hasWriteVerb) return { kind: 'read', reason: 'HTTP GET in name/description' };
+
+  const firstWord = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)[0]
+    ?.toLowerCase();
+  if (firstWord && WRITE_NAME_VERBS.has(firstWord)) return { kind: 'write', reason: `name starts with "${firstWord}"` };
+  if (firstWord && READ_NAME_VERBS.has(firstWord)) return { kind: 'read', reason: `name starts with "${firstWord}"` };
+
+  return { kind: 'read', reason: 'default (no read/write signal found)' };
+}
+
+// ── Schema helpers ─────────────────────────────────────────────────────
+function unwrapSchema(def = {}) {
+  if (Array.isArray(def.anyOf)) {
+    const branch = def.anyOf.find(s => s && s.type !== 'null');
+    if (branch) {
+      return { ...branch, description: def.description ?? branch.description };
+    }
+  }
+  return def;
+}
+
+function buildJevState(conversationMessages) {
+  return conversationMessages
+    .filter(m => ['user', 'assistant', 'tool'].includes(m.role))
+    .map(m => {
+      if (m.role === 'tool') {
+        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        return `tool_result: ${content.slice(0, 800)}`;
+      }
+      if (typeof m.content === 'string' && m.content.trim() !== '') {
+        return `${m.role}: ${m.content}`;
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+// Resolves ONE tool's enum/gateway parameters from the conversation. Each
+// parameter gets an explicit UNKNOWN option, and Jev is told not to guess
+// — a parameter only counts as resolved if Jev is both confident AND
+// didn't pick UNKNOWN. REQUIRED parameters that don't resolve are returned
+// in `unresolvedRequired` (with their label + full choice list) rather
+// than being guessed at or silently dropped — the caller (in /api/chat)
+// turns those into a direct clarifying note instead of calling the tool.
+async function askJevResolveToolParams(clinicalState, tool) {
+  const props = tool?.schema?.properties || {};
+  const required = new Set(tool?.schema?.required || []);
+  const UNKNOWN = 'UNKNOWN';
+
+  const questions = {};
+  const optionMaps = {};
+  const labels = {};
+
+  for (const [paramName, rawDef] of Object.entries(props)) {
+    const paramDef = unwrapSchema(rawDef);
+    if (!Array.isArray(paramDef.enum) || paramDef.enum.length === 0) continue;
+
+    optionMaps[paramName] = new Map(paramDef.enum.map(opt => [String(opt), opt]));
+    labels[paramName] = paramDef.description || paramName;
+
+    const criteria = {};
+    paramDef.enum.forEach(opt => {
+      criteria[String(opt)] = paramDef.description
+        ? `${paramDef.description} — this option: "${opt}"`
+        : `Option: ${opt}`;
+    });
+    criteria[UNKNOWN] = 'The conversation does not clearly indicate an answer to this yet — do not guess.';
+
+    questions[paramName] = {
+      type: 'choice',
+      instructions:
+        (paramDef.description || `Select the correct value for ${paramName}, given the conversation so far.`) +
+        ` Pick ${UNKNOWN} if the conversation doesn't clearly indicate an answer.`,
+      criteria
+    };
+  }
+
+  if (Object.keys(questions).length === 0) {
+    return { picks: {}, unresolvedRequired: [] };
+  }
+
+  const picks = {};
+  const unresolvedRequired = [];
+
+  try {
+    const jevResult = await askJev(clinicalState, questions);
+    const answers = jevResult.answers || {};
+
+    for (const paramName of Object.keys(questions)) {
+      const answer = answers[paramName];
+      const map = optionMaps[paramName];
+      const resolved =
+        answer && answer.type === 'choice' && answer.choice !== UNKNOWN &&
+        typeof answer.confidence === 'number' &&
+        answer.confidence >= PARAM_RESOLUTION_CONFIDENCE_THRESHOLD &&
+        map.has(String(answer.choice));
+
+      if (resolved) {
+        picks[paramName] = map.get(String(answer.choice));
+      } else if (required.has(paramName)) {
+        unresolvedRequired.push({ name: paramName, label: labels[paramName], choices: Array.from(map.values()) });
+      }
+    }
+  } catch (jevError) {
+    console.error('Jev param resolution failed, treating all required enum params as unresolved:', jevError.message);
+    // Fail toward asking the clinician, never toward guessing or silently
+    // dropping the tool.
+    for (const paramName of Object.keys(questions)) {
+      if (required.has(paramName)) {
+        unresolvedRequired.push({ name: paramName, label: labels[paramName], choices: Array.from(optionMaps[paramName].values()) });
+      }
+    }
+  }
+
+  return { picks, unresolvedRequired };
+}
+
+// Some OpenRouter providers (e.g. Alibaba/Qwen while in "thinking" mode)
+// reject tool_choice: 'auto' or a forced choice with a 400 error in some
+// configurations. If that happens, retry once without tool_choice at all.
+async function fetchOpenRouterChat(payload) {
+  const doFetch = (body) => fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'http://localhost:3000',
+      'X-Title': 'MCP OpenRouter Client'
+    },
+    body: JSON.stringify(body)
+  });
+
+  let response = await doFetch(payload);
+  let toolChoiceStripped = false;
+
+  if (!response.ok && payload.tool_choice) {
+    const errorText = await response.clone().text();
+    const toolChoiceUnsupported = /tool_choice/i.test(errorText) &&
+      (/thinking mode/i.test(errorText) || /invalid_parameter_error/i.test(errorText));
+
+    if (toolChoiceUnsupported) {
+      console.warn(`Provider rejected tool_choice for model "${payload.model}", retrying without it:`, errorText);
+      const { tool_choice, ...payloadWithoutForce } = payload;
+      response = await doFetch(payloadWithoutForce);
+      toolChoiceStripped = true;
+    }
+  }
+
+  response.toolChoiceStripped = toolChoiceStripped;
+  return response;
 }
 
 // Convert MCP tools to OpenRouter format
@@ -226,55 +471,88 @@ function convertMCPToolsToOpenRouter(mcpTools) {
   }));
 }
 
+// Build the tool catalog for one chat request: every MCP tool (classified
+// read/write from its list entry + schema, used only to gate write tools
+// when POST_TOOL_MODE is 'off') plus the RAG search tool.
+function buildToolCatalog(mcpTools, includeSearch) {
+  const catalog = mcpTools.map(t => {
+    const { kind, reason } = classifyTool(t);
+    return {
+      name: t.name,
+      description: t.description || '',
+      schema: t.inputSchema,
+      kind,
+      reason,
+      source: 'mcp',
+      def: convertMCPToolsToOpenRouter([t])[0]
+    };
+  });
+
+  if (includeSearch) {
+    const def = {
+      type: 'function',
+      function: {
+        name: 'search_medical_guidelines',
+        description: 'Search comprehensive obstetric and gynecological medical guidelines and clinical protocols using Cloudflare AI Search RAG pipeline.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'The medical question or clinical scenario to search for in the guidelines.'
+            }
+          },
+          required: ['query']
+        }
+      }
+    };
+    const { kind, reason } = classifyTool({ name: def.function.name, description: def.function.description });
+    catalog.push({
+      name: def.function.name,
+      description: def.function.description,
+      schema: def.function.parameters,
+      kind,
+      reason: reason === 'default (no read/write signal found)' ? 'built-in retrieval tool (default: read)' : reason,
+      source: 'rag',
+      def
+    });
+  }
+
+  return catalog;
+}
+
 // API Routes
 
-// Initialize Cloudflare AI Search
 app.post('/api/aisearch/init', async (req, res) => {
   try {
     await initAISearch();
-    res.json({ 
-      success: true, 
-      instanceName: 'obgyn4',
-      message: 'Cloudflare AI Search initialized'
-    });
+    res.json({ success: true, instanceName: 'obgyn4', message: 'Cloudflare AI Search initialized' });
   } catch (error) {
     console.error('AI Search init error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-//initialize gyne cloudflare ai search
 app.post('/api/aisearch/initGyn', async (req, res) => {
   try {
     await initAISearchGyn();
-    res.json({ 
-      success: true, 
-      instanceName: 'gyne1',
-      message: 'Cloudflare AI Search initialized'
-    });
+    res.json({ success: true, instanceName: 'gyne1', message: 'Cloudflare AI Search initialized' });
   } catch (error) {
     console.error('AI Search init error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-//initialize smfm cloudflare ai search
 app.post('/api/aisearch/initSMFM', async (req, res) => {
   try {
     await initAISearchSMFM();
-    res.json({ 
-      success: true, 
-      instanceName: 'smfm-guidelines',
-      message: 'Cloudflare AI Search initialized'
-    });
+    res.json({ success: true, instanceName: 'smfm-guidelines', message: 'Cloudflare AI Search initialized' });
   } catch (error) {
     console.error('AI Search init error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Connect to a new MCP server (auto-generates unique ID so multiple
-// windows/devices can each hold their own connection without colliding)
 app.post('/api/servers', async (req, res) => {
   try {
     const { serverId, type, url, command, args, env } = req.body;
@@ -283,7 +561,6 @@ app.post('/api/servers', async (req, res) => {
       return res.status(400).json({ error: 'serverId is required' });
     }
 
-    // Generate a unique server ID per connection request
     const uniqueServerId = `${serverId}-${crypto.randomBytes(4).toString('hex')}`;
 
     if (type === 'sse') {
@@ -306,8 +583,6 @@ app.post('/api/servers', async (req, res) => {
   }
 });
 
-// Explicit reconnect endpoint: closes any existing connection for the given
-// serverId and opens a fresh one under that same id.
 app.post('/api/servers/:serverId/reconnect', async (req, res) => {
   try {
     const { serverId } = req.params;
@@ -336,18 +611,16 @@ app.post('/api/servers/:serverId/reconnect', async (req, res) => {
   }
 });
 
-// List all connected servers
 app.get('/api/servers', (req, res) => {
   const servers = Array.from(mcpClients.keys());
   res.json({ servers });
 });
 
-// Disconnect from a server
 app.delete('/api/servers/:serverId', async (req, res) => {
   try {
     const { serverId } = req.params;
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -361,12 +634,11 @@ app.delete('/api/servers/:serverId', async (req, res) => {
   }
 });
 
-// List available tools from a server
 app.get('/api/servers/:serverId/tools', async (req, res) => {
   try {
     const { serverId } = req.params;
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -378,44 +650,81 @@ app.get('/api/servers/:serverId/tools', async (req, res) => {
   }
 });
 
+app.get('/api/servers/:serverId/tool-classification', async (req, res) => {
+  try {
+    const client = mcpClients.get(req.params.serverId);
+
+    if (!client) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const { tools = [] } = await client.listTools();
+    res.json({
+      postToolMode: POST_TOOL_MODE,
+      tools: tools.map(t => ({ name: t.name, ...classifyTool(t) }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Chat with OpenRouter (with MCP tool support and streaming)
+//
+// Standard agentic tool-use loop, up to MAX_TOOL_ROUNDS rounds:
+//   1. The LLM is offered every tool in the catalog (all read tools, plus
+//      write tools unless POST_TOOL_MODE is 'off'), tool_choice: 'auto'.
+//      The LLM decides whether to call anything, and which.
+//   2. If it calls nothing, that response IS the final answer — done.
+//   3. If it calls tool(s): for each call, Jev resolves that tool's
+//      enum/gateway parameters from the conversation
+//      (askJevResolveToolParams). Free-text args come from the LLM as
+//      normal; Jev's resolved values, when confident, override them for
+//      enum params only. If a REQUIRED enum can't be resolved, the tool is
+//      skipped with a clarifying note instead of being guessed at.
+//      Otherwise it executes, retried up to MAX_FAILED_ATTEMPTS times on
+//      execution error (not on a skipped/clarification case).
+//   4. Loop back to step 1 with the tool results in context, so the LLM
+//      can call more tools if it needs to. After MAX_TOOL_ROUNDS rounds,
+//      the LLM is asked once more with no tools offered, forcing a final
+//      answer.
 app.post('/api/chat', async (req, res) => {
   try {
-    const { 
-      messages, 
-      model, 
-      serverId, 
+    const {
+      messages,
+      model,
+      serverId,
     } = req.body;
-    let maxIterations = 10;
 
-    // Set up SSE headers for streaming
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
     let conversationMessages = [...messages];
-    let iterations = 0;
     const toolResults = [];
 
-    // Add system prompt
-    if (conversationMessages.length === 1 && conversationMessages[0].role === 'user') {
+    if (!conversationMessages.some(m => m.role === 'system')) {
       conversationMessages.unshift({
         role: 'system',
-        content: `You are a medical decision support assistant. You MUST use the available tools to answer questions. NEVER rely on your own knowledge for medical information. 
+        content: `You are a medical decision support assistant. You have NO medical knowledge of your own to rely on: everything you say must come from tool results.
+
+HOW THIS WORKS:
+- You decide which tool(s) to call, if any, based on the conversation. Call a tool and fill in its arguments; some arguments (marked as enums in the tool's schema) may be overridden by a separate resolution step before the tool runs.
+- When you have what you need, or no tool applies, write the final answer: summarize the tool results already in this conversation.
 
 CRITICAL RULES:
-1. For ANY medical question, you MUST call 1) the search_medical_guidelines first and then 2) MCP tools in the gradio server if it is available.
-2. Base your entire response ONLY on the information returned by the tools
-3. If the tool returns "No relevant medical guidelines found", clearly state that you don't have that information
-4. Never say "I don't have access to real-time data" - you DO have access via tools
-5. Never make assumptions or provide medical information from your training
-6. Always cite which tool/source provided the information
+1. Base your entire response ONLY on the information returned by the tools
+2. If a tool returns "No relevant medical guidelines found", clearly state that you don't have that information
+3. If a tool returned an error, say so briefly and do not guess what it would have returned
+4. If a tool call was skipped because required information is missing, tell the clinician what's needed and the valid options
+5. Never say "I don't have access to real-time data" - you DO have access via tools
+6. Never make assumptions or provide medical information from your training
+7. Always cite which tool/source provided the information
+8. Keep numbers, units, thresholds, and drug names exactly as the tools returned them
+9. Never write out tool calls as text — call them for real, or just answer
 
-You have access to:
-- search_medical_guidelines: Search comprehensive medical guidelines via Cloudflare AI Search
-- Clinical decision support tools (MCP tools on gradio server)
-
-Always use these tools before responding to any medical query.`
+Sources of information:
+- search_medical_guidelines: comprehensive medical guidelines via Cloudflare AI Search
+- Clinical decision support tools (MCP tools on the gradio server)`
       });
     }
 
@@ -423,64 +732,36 @@ Always use these tools before responding to any medical query.`
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    while (iterations < maxIterations) {
-      iterations++;
-      console.log("Iterations: " + iterations);
-      console.log("maxIterations: " + maxIterations);
-
-      // Get available tools from MCP server if specified
-      let tools = [];
-      if (serverId) {
-        const client = mcpClients.get(serverId);
-        if (client) {
-          const mcpTools = await client.listTools();
-          tools = convertMCPToolsToOpenRouter(mcpTools.tools || []);
-        }
+    // Tool list is fetched once per request, then classified read/write
+    // (classification is now only used to gate write tools out entirely
+    // when POST_TOOL_MODE is 'off' — the LLM picks among whatever's left).
+    let mcpTools = [];
+    if (serverId) {
+      const client = mcpClients.get(serverId);
+      if (client) {
+        const listed = await client.listTools();
+        mcpTools = listed.tools || [];
       }
-      
-      // Add Cloudflare AI Search tool
-      if (aiSearchReady) {
-        tools.push({
-          type: 'function',
-          function: {
-            name: 'search_medical_guidelines',
-            description: 'Search comprehensive obstetric and gynecological medical guidelines and clinical protocols using Cloudflare AI Search RAG pipeline.',
-            parameters: {
-              type: 'object',
-              properties: {
-                query: {
-                  type: 'string',
-                  description: 'The medical question or clinical scenario to search for in the guidelines.'
-                }
-              },
-              required: ['query']
-            }
-          }
-        });
-      }
+    }
+    const catalog = buildToolCatalog(mcpTools, aiSearchReady);
+    console.log('Tool classification:', catalog.map(t => `${t.name}=${t.kind}`).join(', ') || '(no tools)');
 
-      // Call OpenRouter API with streaming
-      const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'http://localhost:3000',
-          'X-Title': 'MCP OpenRouter Client'
-        },
-        body: JSON.stringify({
-          model: model || 'openai/gpt-3.5-turbo',
-          messages: conversationMessages,
-          tools: tools.length > 0 ? tools : undefined,
-          stream: true
-        })
-      });
+    const offeredCatalog = POST_TOOL_MODE === 'off'
+      ? catalog.filter(t => t.kind !== 'write')
+      : catalog;
+    const toolsForRequest = offeredCatalog.map(t => t.def);
+    const offeredToolNames = new Set(offeredCatalog.map(t => t.name));
+
+    // Does one OpenRouter streaming call and returns its accumulated content
+    // + tool_calls. Streams `content` deltas to the client as they arrive.
+    // Doesn't touch conversationMessages — the caller decides what to do
+    // with the result.
+    async function streamChatOnce(payload) {
+      const openRouterResponse = await fetchOpenRouterChat(payload);
 
       if (!openRouterResponse.ok) {
         const error = await openRouterResponse.text();
-        sendEvent('error', { message: `OpenRouter API error: ${error}` });
-        res.end();
-        return;
+        return { ok: false, error };
       }
 
       let fullContent = '';
@@ -504,7 +785,7 @@ Always use these tools before responding to any medical query.`
 
             try {
               const parsed = JSON.parse(data);
-              const delta = parsed.choices[0]?.delta;
+              const delta = parsed.choices?.[0]?.delta;
 
               if (delta?.content) {
                 fullContent += delta.content;
@@ -514,21 +795,11 @@ Always use these tools before responding to any medical query.`
               if (delta?.tool_calls) {
                 for (const tc of delta.tool_calls) {
                   if (!toolCalls[tc.index]) {
-                    toolCalls[tc.index] = {
-                      id: tc.id || '',
-                      type: 'function',
-                      function: { name: '', arguments: '' }
-                    };
+                    toolCalls[tc.index] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
                   }
-                  if (tc.function?.name) {
-                    toolCalls[tc.index].function.name = tc.function.name;
-                  }
-                  if (tc.function?.arguments) {
-                    toolCalls[tc.index].function.arguments += tc.function.arguments;
-                  }
-                  if (tc.id) {
-                    toolCalls[tc.index].id = tc.id;
-                  }
+                  if (tc.function?.name) toolCalls[tc.index].function.name = tc.function.name;
+                  if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
+                  if (tc.id) toolCalls[tc.index].id = tc.id;
                 }
               }
             } catch (e) {
@@ -538,146 +809,252 @@ Always use these tools before responding to any medical query.`
         }
       }
 
-      const assistantMessage = {
-        role: 'assistant',
-        content: fullContent || null
-      };
+      return { ok: true, fullContent, toolCalls: toolCalls.filter(Boolean), toolChoiceStripped: openRouterResponse.toolChoiceStripped };
+    }
 
-      if (toolCalls.length > 0) {
-        assistantMessage.tool_calls = toolCalls;
+    // Runs a tool that has an MCP client or is the RAG search tool.
+    async function executeTool(calledName, toolArgs) {
+      if (calledName === 'search_medical_guidelines') {
+        try {
+          if (!aiSearchReady) {
+            throw new Error('Cloudflare AI Search not initialized. Please initialize RAG first.');
+          }
+          console.log(`Querying Cloudflare AI Search for: "${toolArgs.query}"`);
+          const ragResponse = await queryAISearch(toolArgs.query);
+          console.log('Cloudflare AI Search response received');
+
+          if (ragResponse.textResponse) {
+            const sourcesText = ragResponse.sources.length > 0
+              ? `\n\nSources: ${ragResponse.sources.join(', ')}`
+              : '';
+            return { result: { content: [{ type: 'text', text: ragResponse.textResponse + sourcesText }] }, ok: true };
+          }
+          return { result: { content: [{ type: 'text', text: 'No relevant medical guidelines found.' }] }, ok: true };
+        } catch (error) {
+          console.error('AI Search error:', error);
+          return { result: { content: [{ type: 'text', text: `Error searching medical guidelines: ${error.message}` }] }, ok: false };
+        }
       }
 
+      const client = mcpClients.get(serverId);
+      if (!client) return { hardFailure: true };
+
+      try {
+        const result = await client.callTool({ name: calledName, arguments: toolArgs });
+        return { result, ok: !result?.isError };
+      } catch (mcpError) {
+        console.error(`MCP tool call failed for "${calledName}":`, mcpError.message);
+        return {
+          result: { content: [{ type: 'text', text: `Error calling tool "${calledName}": ${mcpError.message}. You may retry with different arguments.` }] },
+          ok: false
+        };
+      }
+    }
+
+    // Runs ONE tool call the LLM already made: resolves its enum params via
+    // Jev, executes it (retrying on execution error), and pushes the tool
+    // result into conversationMessages. Returns:
+    //   { hardFailure: true }  — unrecoverable (ends the response)
+    //   { ranTool: true }      — normal case, whether it succeeded, errored,
+    //                            or was skipped for missing required info
+    async function handleToolCall(toolCall) {
+      const calledName = toolCall.function.name;
+
+      if (!offeredToolNames.has(calledName)) {
+        console.error(`Model called "${calledName}" but it was not offered this round`);
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ error: `Tool "${calledName}" is not available right now.` })
+        });
+        return { ranTool: true };
+      }
+
+      let toolArgs;
+      try {
+        toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+      } catch (jsonError) {
+        console.error(`JSON parse error for tool ${calledName}:`, jsonError);
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({
+            error: `JSON parsing failed: ${jsonError.message}. Please retry with valid JSON.`,
+            invalid_json: toolCall.function.arguments
+          })
+        });
+        return { ranTool: true };
+      }
+
+      // Jev resolves this tool's enum/gateway parameters from the
+      // conversation. Free-text args stay whatever the LLM filled in;
+      // resolved enum values (when confident) override them.
+      const entry = catalog.find(t => t.name === calledName);
+      const state = buildJevState(conversationMessages);
+      const { picks, unresolvedRequired } = await askJevResolveToolParams(state, entry);
+
+      if (unresolvedRequired.length > 0) {
+        const need = unresolvedRequired
+          .map(p => `${p.label} (choices: ${p.choices.join(', ')})`)
+          .join('; ');
+        console.warn(`Skipping "${calledName}" — missing required info: ${need}`);
+        const note = `Tool "${calledName}" was not called: missing required information — ${need}. Ask the clinician for this and it can be called on the next turn.`;
+
+        toolResults.push({ tool: calledName, arguments: toolArgs, rawResult: { content: [{ type: 'text', text: note }] }, displayResult: note });
+        sendEvent('tool_result', { tool: calledName, arguments: toolArgs, displayResult: note, ok: false, needsClarification: true });
+
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ content: [{ type: 'text', text: note }] })
+        });
+        return { ranTool: true };
+      }
+
+      if (Object.keys(picks).length > 0) {
+        for (const [paramName, value] of Object.entries(picks)) {
+          console.log(`Applying Jev-resolved value "${value}" for ${paramName}`);
+          toolArgs[paramName] = value;
+        }
+        sendEvent('jev_param_resolution', { tool: calledName, picks });
+      }
+
+      sendEvent('tool_call', { tool: calledName, arguments: toolArgs });
+
+      let executed;
+      let attempts = 0;
+      while (attempts < MAX_FAILED_ATTEMPTS) {
+        attempts++;
+        executed = await executeTool(calledName, toolArgs);
+        if (executed.hardFailure) {
+          sendEvent('error', { message: 'MCP server not connected' });
+          res.end();
+          return { hardFailure: true };
+        }
+        if (executed.ok) break;
+        if (attempts < MAX_FAILED_ATTEMPTS) {
+          console.warn(`"${calledName}" errored on attempt ${attempts}/${MAX_FAILED_ATTEMPTS} — retrying`);
+        }
+      }
+
+      const { result, ok } = executed;
+
+      toolResults.push({
+        tool: calledName,
+        arguments: toolArgs,
+        rawResult: result,
+        displayResult: result.content?.[0]?.text || JSON.stringify(result)
+      });
+
+      sendEvent('tool_result', {
+        tool: calledName,
+        arguments: toolArgs,
+        rawResult: result,
+        displayResult: result.content?.[0]?.text || JSON.stringify(result),
+        ok
+      });
+
+      conversationMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result)
+      });
+
+      return { ranTool: true };
+    }
+
+    // ── Agentic loop: LLM picks tools, Jev resolves their enum params ──
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const attempt = await streamChatOnce({
+        model: model || 'openai/gpt-3.5-turbo',
+        messages: conversationMessages,
+        tools: toolsForRequest.length > 0 ? toolsForRequest : undefined,
+        tool_choice: toolsForRequest.length > 0 ? 'auto' : undefined,
+        stream: true
+      });
+
+      if (!attempt.ok) {
+        sendEvent('error', { message: `OpenRouter API error: ${attempt.error}` });
+        res.end();
+        return;
+      }
+
+      const { fullContent, toolCalls } = attempt;
+      const assistantMessage = { role: 'assistant', content: fullContent || null };
+      if (toolCalls.length > 0) assistantMessage.tool_calls = toolCalls;
       conversationMessages.push(assistantMessage);
 
-      // Check if the model wants to call tools
-      if (toolCalls.length > 0) {
-        sendEvent('tool_calls_start', { count: toolCalls.length });
-
-        for (const toolCall of toolCalls) {
-          const toolName = toolCall.function.name;
-          let toolArgs;
-          
-          try {
-            toolArgs = JSON.parse(toolCall.function.arguments);
-          } catch (jsonError) {
-            console.error(`JSON parse error for tool ${toolName}:`, jsonError);
-            conversationMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: JSON.stringify({ 
-                error: `JSON parsing failed: ${jsonError.message}. Please retry with valid JSON.`,
-                invalid_json: toolCall.function.arguments
-              })
-            });
-            continue;
-          }
-
-          sendEvent('tool_call', { tool: toolName, arguments: toolArgs });
-
-          let result;
-          
-          // Handle Cloudflare AI Search
-          if (toolName === 'search_medical_guidelines') {
-            try {
-              if (!aiSearchReady) {
-                throw new Error('Cloudflare AI Search not initialized. Please initialize RAG first.');
-              }
-              
-              console.log(`Querying Cloudflare AI Search for: "${toolArgs.query}"`);
-              
-              const ragResponse = await queryAISearch(toolArgs.query);
-              
-              console.log('Cloudflare AI Search response received');
-              
-              if (ragResponse.textResponse) {
-                // Include sources in the result if available
-                const sourcesText = ragResponse.sources.length > 0
-                  ? `\n\nSources: ${ragResponse.sources.join(', ')}`
-                  : '';
-
-                result = {
-                  content: [{
-                    type: 'text',
-                    text: ragResponse.textResponse + sourcesText
-                  }]
-                };
-              } else {
-                result = {
-                  content: [{
-                    type: 'text',
-                    text: 'No relevant medical guidelines found.'
-                  }]
-                };
-              }
-            } catch (error) {
-              console.error('AI Search error:', error);
-              result = {
-                content: [{
-                  type: 'text',
-                  text: `Error searching medical guidelines: ${error.message}`
-                }]
-              };
-            }
-            
-            maxIterations = iterations + 1;
-            console.log('Search completed - forcing final response on next iteration');
-          }
-
-          // Handle Gradio MCP server tools
-          else {
-            const client = mcpClients.get(serverId);
-            if (!client) {
-              sendEvent('error', { message: 'MCP server not connected' });
-              res.end();
-              return;
-            }
-
-            result = await client.callTool({
-              name: toolName,
-              arguments: toolArgs
-            });
-          }
-
-
-          // Store tool result
-          toolResults.push({
-            tool: toolName,
-            arguments: toolArgs,
-            rawResult: result,
-            displayResult: result.content?.[0]?.text || JSON.stringify(result)
-          });
-
-          sendEvent('tool_result', { 
-            tool: toolName, 
-            arguments: toolArgs,
-            rawResult: result,
-            displayResult: result.content?.[0]?.text || JSON.stringify(result)
-          });
-
-          // Add tool result to conversation
-          conversationMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result)
-          });
-        }
-
-        sendEvent('tool_calls_end', {});
-        continue;
+      if (toolCalls.length === 0) {
+        // No tool calls: this streamed content IS the final answer.
+        sendEvent('done', {
+          conversationMessages: conversationMessages,
+          toolResults: toolResults
+        });
+        res.end();
+        return;
       }
 
-      // No more tool calls, send done event
-      sendEvent('done', {
-        conversationMessages: conversationMessages,
-        toolResults: toolResults
-      });
+      sendEvent('tool_calls_start', { count: toolCalls.length });
+
+      for (const toolCall of toolCalls) {
+        const outcome = await handleToolCall(toolCall);
+        if (outcome.hardFailure) return; // response already ended
+      }
+
+      sendEvent('tool_calls_end', {});
+      // Loop back with tool results in context — the LLM may call more
+      // tools, or write its final answer, on the next round.
+    }
+
+    // Hit MAX_TOOL_ROUNDS: force a final answer with no tools offered.
+    const finalResponse = await fetchOpenRouterChat({
+      model: model || 'openai/gpt-3.5-turbo',
+      messages: conversationMessages,
+      stream: true
+    });
+
+    if (!finalResponse.ok) {
+      const error = await finalResponse.text();
+      sendEvent('error', { message: `OpenRouter API error: ${error}` });
       res.end();
       return;
     }
 
-    // Max iterations reached
+    let fullContent = '';
+    const reader = finalResponse.body.getReader();
+    const decoder = new TextDecoder();
+    let streamBuffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      streamBuffer += decoder.decode(value, { stream: true });
+      const lines = streamBuffer.split('\n');
+      streamBuffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullContent += delta;
+              sendEvent('content', { content: delta });
+            }
+          } catch (e) {
+            console.error('Error parsing stream:', e);
+          }
+        }
+      }
+    }
+
+    conversationMessages.push({ role: 'assistant', content: fullContent || null });
+
     sendEvent('done', {
-      message: 'Maximum iterations reached',
       conversationMessages: conversationMessages,
       toolResults: toolResults
     });
@@ -694,14 +1071,13 @@ Always use these tools before responding to any medical query.`
   }
 });
 
-// Call a tool directly (for testing)
 app.post('/api/servers/:serverId/tools/:toolName/call', async (req, res) => {
   try {
     const { serverId, toolName } = req.params;
     const { arguments: toolArgs } = req.body;
-    
+
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -710,19 +1086,18 @@ app.post('/api/servers/:serverId/tools/:toolName/call', async (req, res) => {
       name: toolName,
       arguments: toolArgs || {}
     });
-    
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// List available resources
 app.get('/api/servers/:serverId/resources', async (req, res) => {
   try {
     const { serverId } = req.params;
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -734,14 +1109,13 @@ app.get('/api/servers/:serverId/resources', async (req, res) => {
   }
 });
 
-// Read a resource
 app.post('/api/servers/:serverId/resources/read', async (req, res) => {
   try {
     const { serverId } = req.params;
     const { uri } = req.body;
-    
+
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -753,12 +1127,11 @@ app.post('/api/servers/:serverId/resources/read', async (req, res) => {
   }
 });
 
-// List available prompts
 app.get('/api/servers/:serverId/prompts', async (req, res) => {
   try {
     const { serverId } = req.params;
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -770,14 +1143,13 @@ app.get('/api/servers/:serverId/prompts', async (req, res) => {
   }
 });
 
-// Get a prompt
 app.post('/api/servers/:serverId/prompts/:promptName', async (req, res) => {
   try {
     const { serverId, promptName } = req.params;
     const { arguments: promptArgs } = req.body;
-    
+
     const client = mcpClients.get(serverId);
-    
+
     if (!client) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -786,18 +1158,16 @@ app.post('/api/servers/:serverId/prompts/:promptName', async (req, res) => {
       name: promptName,
       arguments: promptArgs || {}
     });
-    
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-
-// Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     connectedServers: mcpClients.size,
     aiSearchReady: aiSearchReady,
     activeSearchUrl: activeSearchUrl,
@@ -805,13 +1175,10 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Auto-initialize AI Search on startup
 initAISearch()
   .then(() => console.log('AI Search ready'))
   .catch(err => console.error('AI Search init failed on startup:', err.message));
 
-// Periodically clean up stale MCP connections (older than 2 hours) so that
-// mcpClients doesn't grow unbounded as multiple devices connect over time.
 setInterval(async () => {
   const now = Date.now();
   const maxAge = 2 * 60 * 60 * 1000; // 2 hours
@@ -831,9 +1198,8 @@ setInterval(async () => {
       connectionTimestamps.delete(id);
     }
   }
-}, 30 * 60 * 1000); // Check every 30 minutes
+}, 30 * 60 * 1000);
 
-// Cleanup on shutdown
 process.on('SIGTERM', async () => {
   console.log('Shutting down...');
   for (const [serverId, client] of mcpClients) {
