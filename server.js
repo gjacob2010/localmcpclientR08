@@ -205,19 +205,21 @@ async function connectToStdioServer(serverId, config) {
   return client;
 }
 
+
 // ════════════════════════════════════════════════════════════════════════
 // Jev
 //
-// Jev is used in exactly ONE place: once a tool call has been decided on
-// (by the LLM, via ordinary function-calling — see /api/chat below), Jev
-// resolves that tool's enum/gateway parameters from the conversation
-// (askJevResolveToolParams). It never picks WHICH tool to call — that is
-// entirely the LLM's decision, offered every tool in the catalog (minus
-// write tools if POST_TOOL_MODE is 'off') in a standard 'auto' round.
+// Jev has exactly one job now: resolving the enum/gateway parameters of a
+// tool the LLM has already decided to call. Jev does NOT pick which tool
+// runs — that's the LLM's job, via ordinary 'auto' tool-calling, the same
+// as any standard tool-use integration.
 //
-// Jev runs once per tool call that has enum parameters, right before that
-// call executes. Free-text arguments are filled by the LLM as normal;
-// Jev only ever overrides the enum/gateway ones, and only when confident.
+// For every enum parameter on a called tool, Jev is asked to choose among
+// the schema's real option values — nothing else is offered as a choice —
+// and whatever it answers is applied, REGARDLESS of confidence. There is no
+// "I'm not sure" escape hatch and no threshold to clear: Jev is forced to
+// commit to one of the real options, so its answer can never be something
+// off the list, and it's never skipped for being low-confidence.
 // ════════════════════════════════════════════════════════════════════════
 
 async function askJev(state, questions) {
@@ -242,34 +244,23 @@ async function askJev(state, questions) {
   return response.json();
 }
 
-// Minimum confidence Jev must have when resolving ONE gateway/enum
-// parameter. A parameter that doesn't clear this is NOT guessed at — if
-// it's REQUIRED, the tool call is skipped and turned into a direct
-// clarifying note to the clinician instead (see askJevResolveToolParams
-// and its call site in /api/chat).
-const PARAM_RESOLUTION_CONFIDENCE_THRESHOLD = parseFloat(
-  process.env.PARAM_RESOLUTION_CONFIDENCE_THRESHOLD || '0.2'
-);
-
-// A tool call that ERRORS on execution is retried up to this many times
-// with the same arguments. This is the only reason a tool call runs more
-// than once.
-const MAX_FAILED_ATTEMPTS = 2;
-
-// The LLM can call tools, see their results, and call more tools in
-// response, same as any normal agentic tool-use loop. This caps how many
-// such rounds happen before Claude is forced to answer with no tools
-// offered, so a model that keeps calling tools can't loop forever.
-const MAX_TOOL_ROUNDS = parseInt(process.env.MAX_TOOL_ROUNDS || '4', 10);
+// A tool call that ERRORS (bad args, MCP failure, etc.) is just reported
+// back to the model as a tool result, like any normal function-calling
+// flow — the model sees the error and can retry with corrected arguments
+// on its next turn. There's no separate bespoke retry loop; maxIterations
+// below is only a safety cap on the whole conversation turn.
+const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || '10', 10);
 
 // What happens with POST / write tools:
-//   'llm' (default): offered to the LLM alongside read tools, every round.
-//   'off':            write tools are never offered at all.
+//   'llm' (default): offered to the model like any other tool.
+//   'off':           never offered to the model at all.
 const POST_TOOL_MODE = (process.env.POST_TOOL_MODE || 'llm').toLowerCase();
 
-// ── Read vs POST detection (used only to gate write tools out entirely
-//    when POST_TOOL_MODE is 'off' — read/write no longer changes how a
-//    tool gets selected, since the LLM picks every tool itself) ─────────
+// ── Read vs POST detection ─────────────────────────────────────────────
+// Used ONLY to support POST_TOOL_MODE='off' as a safety switch (exclude
+// certain tools from ever being offered to the model). It no longer gates
+// Jev involvement — Jev resolves enum params on ANY tool the model calls,
+// read or write.
 const parseList = (v) => (v || '').split(',').map(s => s.trim()).filter(Boolean);
 const READ_TOOL_OVERRIDES = new Set(parseList(process.env.READ_TOOLS));
 const POST_TOOL_OVERRIDES = new Set(parseList(process.env.POST_TOOLS));
@@ -313,14 +304,90 @@ function classifyTool(tool) {
 }
 
 // ── Schema helpers ─────────────────────────────────────────────────────
+// Handles both `anyOf` (nullable wrapper) and `oneOf` (same shape, used by
+// some schema generators) so a param wrapped either way is still seen.
 function unwrapSchema(def = {}) {
-  if (Array.isArray(def.anyOf)) {
-    const branch = def.anyOf.find(s => s && s.type !== 'null');
+  const branches = Array.isArray(def.anyOf) ? def.anyOf : Array.isArray(def.oneOf) ? def.oneOf : null;
+  if (branches) {
+    const branch = branches.find(s => s && s.type !== 'null');
     if (branch) {
       return { ...branch, description: def.description ?? branch.description };
     }
   }
   return def;
+}
+
+function baseType(def = {}) {
+  return Array.isArray(def.type) ? def.type.find(t => t !== 'null') : def.type;
+}
+
+// Resolves a CALLED tool's enum/gateway parameters from the conversation.
+// Every enum parameter gets its own Jev 'choice' question, with criteria
+// built ONLY from the schema's real option values — there's no "unknown" /
+// "not applicable" option offered, so whatever Jev answers is guaranteed to
+// be one of the real options. The result is applied unconditionally: no
+// confidence threshold, no skipping. This is deliberately different from
+// the tool-SELECTION questions (removed) — this only ever fires once the
+// model has already decided to call this specific tool, so there's no
+// "is this tool even relevant" judgment left to make, just "which option".
+//
+// If Jev's call fails outright (network/API error), picks for that tool are
+// left empty and a warning is logged — the model's own guessed values stay
+// in place rather than the tool call failing entirely.
+async function askJevEnumPicksForTool(clinicalState, tool, toolArgs) {
+  const props = tool?.schema?.properties || {};
+  const questions = {};
+  const optionMaps = {};
+
+  for (const [paramName, rawDef] of Object.entries(props)) {
+    const paramDef = unwrapSchema(rawDef);
+    if (!Array.isArray(paramDef.enum) || paramDef.enum.length === 0) continue;
+
+    optionMaps[paramName] = new Map(paramDef.enum.map(opt => [String(opt), opt]));
+
+    const criteria = {};
+    paramDef.enum.forEach(opt => {
+      criteria[String(opt)] = paramDef.description
+        ? `${paramDef.description} — this option: "${opt}"`
+        : `Option: ${opt}`;
+    });
+
+    questions[paramName] = {
+      type: 'choice',
+      instructions:
+        (paramDef.description || `Select the correct value for ${paramName}, given the conversation so far.`) +
+        ` The model's own guess for this call was ${JSON.stringify(toolArgs[paramName] ?? null)} — use that as a hint, ` +
+        `but choose whichever option genuinely fits best; don't just default to it.`,
+      criteria
+    };
+  }
+
+  if (Object.keys(questions).length === 0) {
+    return {};
+  }
+
+  const picks = {};
+  try {
+    const jevResult = await askJev(clinicalState, questions);
+    const answers = jevResult.answers || {};
+
+    for (const paramName of Object.keys(questions)) {
+      const answer = answers[paramName];
+      const map = optionMaps[paramName];
+      // Criteria only ever contained real option keys, so any valid
+      // 'choice' answer is guaranteed to be one of them. Taken regardless
+      // of confidence — there is no threshold here by design.
+      if (answer && answer.type === 'choice' && map.has(String(answer.choice))) {
+        picks[paramName] = map.get(String(answer.choice));
+      } else if (answer) {
+        console.warn(`Jev returned an answer for "${paramName}" that wasn't one of the offered options — keeping the model's own value`);
+      }
+    }
+  } catch (jevError) {
+    console.error(`Jev enum resolution failed for tool "${tool.name}", keeping the model's own values:`, jevError.message);
+  }
+
+  return picks;
 }
 
 function buildJevState(conversationMessages) {
@@ -340,121 +407,6 @@ function buildJevState(conversationMessages) {
     .join('\n');
 }
 
-// Resolves ONE tool's enum/gateway parameters from the conversation. Each
-// parameter gets an explicit UNKNOWN option, and Jev is told not to guess
-// — a parameter only counts as resolved if Jev is both confident AND
-// didn't pick UNKNOWN. REQUIRED parameters that don't resolve are returned
-// in `unresolvedRequired` (with their label + full choice list) rather
-// than being guessed at or silently dropped — the caller (in /api/chat)
-// turns those into a direct clarifying note instead of calling the tool.
-async function askJevResolveToolParams(clinicalState, tool) {
-  const props = tool?.schema?.properties || {};
-  const required = new Set(tool?.schema?.required || []);
-  const UNKNOWN = 'UNKNOWN';
-
-  const questions = {};
-  const optionMaps = {};
-  const labels = {};
-
-  for (const [paramName, rawDef] of Object.entries(props)) {
-    const paramDef = unwrapSchema(rawDef);
-    if (!Array.isArray(paramDef.enum) || paramDef.enum.length === 0) continue;
-
-    optionMaps[paramName] = new Map(paramDef.enum.map(opt => [String(opt), opt]));
-    labels[paramName] = paramDef.description || paramName;
-
-    const criteria = {};
-    paramDef.enum.forEach(opt => {
-      criteria[String(opt)] = paramDef.description
-        ? `${paramDef.description} — this option: "${opt}"`
-        : `Option: ${opt}`;
-    });
-    criteria[UNKNOWN] = 'The conversation does not clearly indicate an answer to this yet — do not guess.';
-
-    questions[paramName] = {
-      type: 'choice',
-      instructions:
-        (paramDef.description || `Select the correct value for ${paramName}, given the conversation so far.`) +
-        ` Pick ${UNKNOWN} if the conversation doesn't clearly indicate an answer.`,
-      criteria
-    };
-  }
-
-  if (Object.keys(questions).length === 0) {
-    return { picks: {}, unresolvedRequired: [] };
-  }
-
-  const picks = {};
-  const unresolvedRequired = [];
-
-  try {
-    const jevResult = await askJev(clinicalState, questions);
-    const answers = jevResult.answers || {};
-
-    for (const paramName of Object.keys(questions)) {
-      const answer = answers[paramName];
-      const map = optionMaps[paramName];
-      const resolved =
-        answer && answer.type === 'choice' && answer.choice !== UNKNOWN &&
-        typeof answer.confidence === 'number' &&
-        answer.confidence >= PARAM_RESOLUTION_CONFIDENCE_THRESHOLD &&
-        map.has(String(answer.choice));
-
-      if (resolved) {
-        picks[paramName] = map.get(String(answer.choice));
-      } else if (required.has(paramName)) {
-        unresolvedRequired.push({ name: paramName, label: labels[paramName], choices: Array.from(map.values()) });
-      }
-    }
-  } catch (jevError) {
-    console.error('Jev param resolution failed, treating all required enum params as unresolved:', jevError.message);
-    // Fail toward asking the clinician, never toward guessing or silently
-    // dropping the tool.
-    for (const paramName of Object.keys(questions)) {
-      if (required.has(paramName)) {
-        unresolvedRequired.push({ name: paramName, label: labels[paramName], choices: Array.from(optionMaps[paramName].values()) });
-      }
-    }
-  }
-
-  return { picks, unresolvedRequired };
-}
-
-// Some OpenRouter providers (e.g. Alibaba/Qwen while in "thinking" mode)
-// reject tool_choice: 'auto' or a forced choice with a 400 error in some
-// configurations. If that happens, retry once without tool_choice at all.
-async function fetchOpenRouterChat(payload) {
-  const doFetch = (body) => fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:3000',
-      'X-Title': 'MCP OpenRouter Client'
-    },
-    body: JSON.stringify(body)
-  });
-
-  let response = await doFetch(payload);
-  let toolChoiceStripped = false;
-
-  if (!response.ok && payload.tool_choice) {
-    const errorText = await response.clone().text();
-    const toolChoiceUnsupported = /tool_choice/i.test(errorText) &&
-      (/thinking mode/i.test(errorText) || /invalid_parameter_error/i.test(errorText));
-
-    if (toolChoiceUnsupported) {
-      console.warn(`Provider rejected tool_choice for model "${payload.model}", retrying without it:`, errorText);
-      const { tool_choice, ...payloadWithoutForce } = payload;
-      response = await doFetch(payloadWithoutForce);
-      toolChoiceStripped = true;
-    }
-  }
-
-  response.toolChoiceStripped = toolChoiceStripped;
-  return response;
-}
-
 // Convert MCP tools to OpenRouter format
 function convertMCPToolsToOpenRouter(mcpTools) {
   return mcpTools.map(tool => ({
@@ -472,8 +424,8 @@ function convertMCPToolsToOpenRouter(mcpTools) {
 }
 
 // Build the tool catalog for one chat request: every MCP tool (classified
-// read/write from its list entry + schema, used only to gate write tools
-// when POST_TOOL_MODE is 'off') plus the RAG search tool.
+// read/write only for the POST_TOOL_MODE='off' filter) plus the RAG search
+// tool.
 function buildToolCatalog(mcpTools, includeSearch) {
   const catalog = mcpTools.map(t => {
     const { kind, reason } = classifyTool(t);
@@ -670,23 +622,14 @@ app.get('/api/servers/:serverId/tool-classification', async (req, res) => {
 
 // Chat with OpenRouter (with MCP tool support and streaming)
 //
-// Standard agentic tool-use loop, up to MAX_TOOL_ROUNDS rounds:
-//   1. The LLM is offered every tool in the catalog (all read tools, plus
-//      write tools unless POST_TOOL_MODE is 'off'), tool_choice: 'auto'.
-//      The LLM decides whether to call anything, and which.
-//   2. If it calls nothing, that response IS the final answer — done.
-//   3. If it calls tool(s): for each call, Jev resolves that tool's
-//      enum/gateway parameters from the conversation
-//      (askJevResolveToolParams). Free-text args come from the LLM as
-//      normal; Jev's resolved values, when confident, override them for
-//      enum params only. If a REQUIRED enum can't be resolved, the tool is
-//      skipped with a clarifying note instead of being guessed at.
-//      Otherwise it executes, retried up to MAX_FAILED_ATTEMPTS times on
-//      execution error (not on a skipped/clarification case).
-//   4. Loop back to step 1 with the tool results in context, so the LLM
-//      can call more tools if it needs to. After MAX_TOOL_ROUNDS rounds,
-//      the LLM is asked once more with no tools offered, forcing a final
-//      answer.
+// Standard 'auto' tool-calling loop: the LLM decides which tool(s) to call,
+// each round, for up to MAX_ITERATIONS rounds. The only custom step is
+// right before each tool executes: if it has enum parameters, Jev resolves
+// them and its answer is applied unconditionally (see askJevEnumPicksForTool
+// above). The loop ends naturally the first time the model responds with no
+// tool calls — that response IS the final answer, streamed as it's
+// generated. If MAX_ITERATIONS is hit first, one last no-tools call forces
+// a wrap-up so the turn always ends with a summary.
 app.post('/api/chat', async (req, res) => {
   try {
     const {
@@ -707,20 +650,16 @@ app.post('/api/chat', async (req, res) => {
         role: 'system',
         content: `You are a medical decision support assistant. You have NO medical knowledge of your own to rely on: everything you say must come from tool results.
 
-HOW THIS WORKS:
-- You decide which tool(s) to call, if any, based on the conversation. Call a tool and fill in its arguments; some arguments (marked as enums in the tool's schema) may be overridden by a separate resolution step before the tool runs.
-- When you have what you need, or no tool applies, write the final answer: summarize the tool results already in this conversation.
-
 CRITICAL RULES:
 1. Base your entire response ONLY on the information returned by the tools
-2. If a tool returns "No relevant medical guidelines found", clearly state that you don't have that information
-3. If a tool returned an error, say so briefly and do not guess what it would have returned
-4. If a tool call was skipped because required information is missing, tell the clinician what's needed and the valid options
+2. Call whatever tools you need, in whatever order makes sense; call more than one if the question needs it
+3. If a tool returns "No relevant medical guidelines found", clearly state that you don't have that information
+4. If a tool call errors, you may retry it with corrected arguments, or try a different tool
 5. Never say "I don't have access to real-time data" - you DO have access via tools
 6. Never make assumptions or provide medical information from your training
 7. Always cite which tool/source provided the information
 8. Keep numbers, units, thresholds, and drug names exactly as the tools returned them
-9. Never write out tool calls as text — call them for real, or just answer
+9. Once you have what you need, respond with your final answer and no further tool calls
 
 Sources of information:
 - search_medical_guidelines: comprehensive medical guidelines via Cloudflare AI Search
@@ -732,9 +671,7 @@ Sources of information:
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Tool list is fetched once per request, then classified read/write
-    // (classification is now only used to gate write tools out entirely
-    // when POST_TOOL_MODE is 'off' — the LLM picks among whatever's left).
+    // Tool list is fetched once per request.
     let mcpTools = [];
     if (serverId) {
       const client = mcpClients.get(serverId);
@@ -743,74 +680,11 @@ Sources of information:
         mcpTools = listed.tools || [];
       }
     }
-    const catalog = buildToolCatalog(mcpTools, aiSearchReady);
-    console.log('Tool classification:', catalog.map(t => `${t.name}=${t.kind}`).join(', ') || '(no tools)');
-
-    const offeredCatalog = POST_TOOL_MODE === 'off'
-      ? catalog.filter(t => t.kind !== 'write')
-      : catalog;
-    const toolsForRequest = offeredCatalog.map(t => t.def);
-    const offeredToolNames = new Set(offeredCatalog.map(t => t.name));
-
-    // Does one OpenRouter streaming call and returns its accumulated content
-    // + tool_calls. Streams `content` deltas to the client as they arrive.
-    // Doesn't touch conversationMessages — the caller decides what to do
-    // with the result.
-    async function streamChatOnce(payload) {
-      const openRouterResponse = await fetchOpenRouterChat(payload);
-
-      if (!openRouterResponse.ok) {
-        const error = await openRouterResponse.text();
-        return { ok: false, error };
-      }
-
-      let fullContent = '';
-      let toolCalls = [];
-      const reader = openRouterResponse.body.getReader();
-      const decoder = new TextDecoder();
-      let streamBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        streamBuffer += decoder.decode(value, { stream: true });
-        const lines = streamBuffer.split('\n');
-        streamBuffer = lines.pop();
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta;
-
-              if (delta?.content) {
-                fullContent += delta.content;
-                sendEvent('content', { content: delta.content });
-              }
-
-              if (delta?.tool_calls) {
-                for (const tc of delta.tool_calls) {
-                  if (!toolCalls[tc.index]) {
-                    toolCalls[tc.index] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
-                  }
-                  if (tc.function?.name) toolCalls[tc.index].function.name = tc.function.name;
-                  if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
-                  if (tc.id) toolCalls[tc.index].id = tc.id;
-                }
-              }
-            } catch (e) {
-              console.error('Error parsing stream:', e);
-            }
-          }
-        }
-      }
-
-      return { ok: true, fullContent, toolCalls: toolCalls.filter(Boolean), toolChoiceStripped: openRouterResponse.toolChoiceStripped };
-    }
+    const fullCatalog = buildToolCatalog(mcpTools, aiSearchReady);
+    // POST_TOOL_MODE='off' is the only thing that ever removes a tool from
+    // what the model is offered — everything else is the model's choice.
+    const catalog = POST_TOOL_MODE === 'off' ? fullCatalog.filter(t => t.kind !== 'write') : fullCatalog;
+    console.log('Tools offered to the model:', catalog.map(t => t.name).join(', ') || '(none)');
 
     // Runs a tool that has an MCP client or is the RAG search tool.
     async function executeTool(calledName, toolArgs) {
@@ -851,141 +725,98 @@ Sources of information:
       }
     }
 
-    // Runs ONE tool call the LLM already made: resolves its enum params via
-    // Jev, executes it (retrying on execution error), and pushes the tool
-    // result into conversationMessages. Returns:
-    //   { hardFailure: true }  — unrecoverable (ends the response)
-    //   { ranTool: true }      — normal case, whether it succeeded, errored,
-    //                            or was skipped for missing required info
-    async function handleToolCall(toolCall) {
-      const calledName = toolCall.function.name;
+    let iterations = 0;
 
-      if (!offeredToolNames.has(calledName)) {
-        console.error(`Model called "${calledName}" but it was not offered this round`);
-        conversationMessages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({ error: `Tool "${calledName}" is not available right now.` })
-        });
-        return { ranTool: true };
-      }
+    while (iterations < MAX_ITERATIONS) {
+      iterations++;
+      const finalRound = iterations === MAX_ITERATIONS;
 
-      let toolArgs;
-      try {
-        toolArgs = JSON.parse(toolCall.function.arguments || '{}');
-      } catch (jsonError) {
-        console.error(`JSON parse error for tool ${calledName}:`, jsonError);
-        conversationMessages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({
-            error: `JSON parsing failed: ${jsonError.message}. Please retry with valid JSON.`,
-            invalid_json: toolCall.function.arguments
-          })
-        });
-        return { ranTool: true };
-      }
+      const toolsForRequest = finalRound ? undefined : catalog.map(t => t.def);
 
-      // Jev resolves this tool's enum/gateway parameters from the
-      // conversation. Free-text args stay whatever the LLM filled in;
-      // resolved enum values (when confident) override them.
-      const entry = catalog.find(t => t.name === calledName);
-      const state = buildJevState(conversationMessages);
-      const { picks, unresolvedRequired } = await askJevResolveToolParams(state, entry);
-
-      if (unresolvedRequired.length > 0) {
-        const need = unresolvedRequired
-          .map(p => `${p.label} (choices: ${p.choices.join(', ')})`)
-          .join('; ');
-        console.warn(`Skipping "${calledName}" — missing required info: ${need}`);
-        const note = `Tool "${calledName}" was not called: missing required information — ${need}. Ask the clinician for this and it can be called on the next turn.`;
-
-        toolResults.push({ tool: calledName, arguments: toolArgs, rawResult: { content: [{ type: 'text', text: note }] }, displayResult: note });
-        sendEvent('tool_result', { tool: calledName, arguments: toolArgs, displayResult: note, ok: false, needsClarification: true });
-
-        conversationMessages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({ content: [{ type: 'text', text: note }] })
-        });
-        return { ranTool: true };
-      }
-
-      if (Object.keys(picks).length > 0) {
-        for (const [paramName, value] of Object.entries(picks)) {
-          console.log(`Applying Jev-resolved value "${value}" for ${paramName}`);
-          toolArgs[paramName] = value;
-        }
-        sendEvent('jev_param_resolution', { tool: calledName, picks });
-      }
-
-      sendEvent('tool_call', { tool: calledName, arguments: toolArgs });
-
-      let executed;
-      let attempts = 0;
-      while (attempts < MAX_FAILED_ATTEMPTS) {
-        attempts++;
-        executed = await executeTool(calledName, toolArgs);
-        if (executed.hardFailure) {
-          sendEvent('error', { message: 'MCP server not connected' });
-          res.end();
-          return { hardFailure: true };
-        }
-        if (executed.ok) break;
-        if (attempts < MAX_FAILED_ATTEMPTS) {
-          console.warn(`"${calledName}" errored on attempt ${attempts}/${MAX_FAILED_ATTEMPTS} — retrying`);
-        }
-      }
-
-      const { result, ok } = executed;
-
-      toolResults.push({
-        tool: calledName,
-        arguments: toolArgs,
-        rawResult: result,
-        displayResult: result.content?.[0]?.text || JSON.stringify(result)
+      const openRouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'http://localhost:3000',
+          'X-Title': 'MCP OpenRouter Client'
+        },
+        body: JSON.stringify({
+          model: model || 'openai/gpt-3.5-turbo',
+          messages: conversationMessages,
+          tools: toolsForRequest,
+          stream: true
+        })
       });
 
-      sendEvent('tool_result', {
-        tool: calledName,
-        arguments: toolArgs,
-        rawResult: result,
-        displayResult: result.content?.[0]?.text || JSON.stringify(result),
-        ok
-      });
-
-      conversationMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: JSON.stringify(result)
-      });
-
-      return { ranTool: true };
-    }
-
-    // ── Agentic loop: LLM picks tools, Jev resolves their enum params ──
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const attempt = await streamChatOnce({
-        model: model || 'openai/gpt-3.5-turbo',
-        messages: conversationMessages,
-        tools: toolsForRequest.length > 0 ? toolsForRequest : undefined,
-        tool_choice: toolsForRequest.length > 0 ? 'auto' : undefined,
-        stream: true
-      });
-
-      if (!attempt.ok) {
-        sendEvent('error', { message: `OpenRouter API error: ${attempt.error}` });
+      if (!openRouterResponse.ok) {
+        const error = await openRouterResponse.text();
+        sendEvent('error', { message: `OpenRouter API error: ${error}` });
         res.end();
         return;
       }
 
-      const { fullContent, toolCalls } = attempt;
+      let fullContent = '';
+      let toolCalls = [];
+      const reader = openRouterResponse.body.getReader();
+      const decoder = new TextDecoder();
+      let streamBuffer = '';
+      // Content is only forwarded to the client once we know this round has
+      // no tool calls (see below) — buffering here avoids streaming
+      // preamble text from a round that turns out to also call a tool,
+      // which would otherwise look like a spurious extra "summary".
+      let bufferedDeltas = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        streamBuffer += decoder.decode(value, { stream: true });
+        const lines = streamBuffer.split('\n');
+        streamBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta;
+
+              if (delta?.content) {
+                fullContent += delta.content;
+                bufferedDeltas.push(delta.content);
+              }
+
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  if (!toolCalls[tc.index]) {
+                    toolCalls[tc.index] = { id: tc.id || '', type: 'function', function: { name: '', arguments: '' } };
+                  }
+                  if (tc.function?.name) toolCalls[tc.index].function.name = tc.function.name;
+                  if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments;
+                  if (tc.id) toolCalls[tc.index].id = tc.id;
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing stream:', e);
+            }
+          }
+        }
+      }
+
+      toolCalls = toolCalls.filter(Boolean);
+
       const assistantMessage = { role: 'assistant', content: fullContent || null };
       if (toolCalls.length > 0) assistantMessage.tool_calls = toolCalls;
       conversationMessages.push(assistantMessage);
 
       if (toolCalls.length === 0) {
-        // No tool calls: this streamed content IS the final answer.
+        // No tool calls this round: this is the final answer. Flush the
+        // buffered text now, as the real summary.
+        for (const chunk of bufferedDeltas) sendEvent('content', { content: chunk });
+
         sendEvent('done', {
           conversationMessages: conversationMessages,
           toolResults: toolResults
@@ -997,64 +828,88 @@ Sources of information:
       sendEvent('tool_calls_start', { count: toolCalls.length });
 
       for (const toolCall of toolCalls) {
-        const outcome = await handleToolCall(toolCall);
-        if (outcome.hardFailure) return; // response already ended
+        const calledName = toolCall.function.name;
+        const entry = catalog.find(t => t.name === calledName);
+
+        if (!entry) {
+          console.error(`Model called "${calledName}" but it was not offered this round`);
+          conversationMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ error: `Tool "${calledName}" is not available right now.` })
+          });
+          continue;
+        }
+
+        let toolArgs;
+        try {
+          toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+        } catch (jsonError) {
+          console.error(`JSON parse error for tool ${calledName}:`, jsonError);
+          conversationMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error: `JSON parsing failed: ${jsonError.message}. Please retry with valid JSON.`,
+              invalid_json: toolCall.function.arguments
+            })
+          });
+          continue;
+        }
+
+        // Jev resolves enum params, unconditionally overriding the model's
+        // own guess for each one — this is the one place Jev is involved.
+        const picks = await askJevEnumPicksForTool(buildJevState(conversationMessages), entry, toolArgs);
+        for (const [paramName, value] of Object.entries(picks)) {
+          toolArgs[paramName] = value;
+        }
+
+        sendEvent('tool_call', { tool: calledName, arguments: toolArgs });
+
+        const executed = await executeTool(calledName, toolArgs);
+        if (executed.hardFailure) {
+          sendEvent('error', { message: 'MCP server not connected' });
+          res.end();
+          return;
+        }
+
+        const { result, ok } = executed;
+
+        toolResults.push({
+          tool: calledName,
+          arguments: toolArgs,
+          rawResult: result,
+          displayResult: result.content?.[0]?.text || JSON.stringify(result)
+        });
+
+        sendEvent('tool_result', {
+          tool: calledName,
+          arguments: toolArgs,
+          rawResult: result,
+          displayResult: result.content?.[0]?.text || JSON.stringify(result),
+          ok
+        });
+
+        conversationMessages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result)
+        });
       }
 
       sendEvent('tool_calls_end', {});
-      // Loop back with tool results in context — the LLM may call more
-      // tools, or write its final answer, on the next round.
+      // Loop back: the model sees this round's results and decides whether
+      // it needs another tool call or is ready to answer.
     }
 
-    // Hit MAX_TOOL_ROUNDS: force a final answer with no tools offered.
-    const finalResponse = await fetchOpenRouterChat({
-      model: model || 'openai/gpt-3.5-turbo',
-      messages: conversationMessages,
-      stream: true
-    });
-
-    if (!finalResponse.ok) {
-      const error = await finalResponse.text();
-      sendEvent('error', { message: `OpenRouter API error: ${error}` });
-      res.end();
-      return;
-    }
-
-    let fullContent = '';
-    const reader = finalResponse.body.getReader();
-    const decoder = new TextDecoder();
-    let streamBuffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      streamBuffer += decoder.decode(value, { stream: true });
-      const lines = streamBuffer.split('\n');
-      streamBuffer = lines.pop();
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              fullContent += delta;
-              sendEvent('content', { content: delta });
-            }
-          } catch (e) {
-            console.error('Error parsing stream:', e);
-          }
-        }
-      }
-    }
-
-    conversationMessages.push({ role: 'assistant', content: fullContent || null });
-
+    // Safety net: MAX_ITERATIONS was hit without the model ever stopping on
+    // its own. `finalRound` above already forced this last pass to omit
+    // tools, so we should have hit the `toolCalls.length === 0` branch and
+    // returned already — this is only reached if that branch's own logic
+    // changes in the future, so it's here to guarantee the response always
+    // ends rather than hanging.
     sendEvent('done', {
+      message: 'Maximum iterations reached',
       conversationMessages: conversationMessages,
       toolResults: toolResults
     });
