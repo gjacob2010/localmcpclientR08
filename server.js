@@ -306,14 +306,49 @@ function classifyTool(tool) {
 // ── Schema helpers ─────────────────────────────────────────────────────
 // Handles both `anyOf` (nullable wrapper) and `oneOf` (same shape, used by
 // some schema generators) so a param wrapped either way is still seen.
-function unwrapSchema(def = {}) {
-  const branches = Array.isArray(def.anyOf) ? def.anyOf : Array.isArray(def.oneOf) ? def.oneOf : null;
-  if (branches) {
-    const branch = branches.find(s => s && s.type !== 'null');
-    if (branch) {
-      return { ...branch, description: def.description ?? branch.description };
+// Resolves a local JSON Schema $ref ("#/$defs/Foo" or "#/definitions/Foo")
+// against the tool's own root schema. Returns null if it can't be resolved
+// (a remote $ref, or a path that doesn't exist).
+function resolveLocalRef(ref, rootSchema) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/') || !rootSchema) return null;
+  const path = ref.slice(2).split('/');
+  let node = rootSchema;
+  for (const segment of path) {
+    if (node == null) return null;
+    node = node[segment];
+  }
+  return node ?? null;
+}
+
+// Unwraps a property definition down to something with a real `enum` array
+// if one exists, handling three patterns that otherwise hide it:
+//   - `$ref` pointing at a shared definition (common with Pydantic/FastMCP-
+//     style generators — the enum often lives under $defs/definitions, not
+//     inline on the property itself)
+//   - `anyOf`/`oneOf` nullable wrappers (optional enum params)
+//   - a $ref INSIDE an anyOf/oneOf branch (both patterns combined)
+// `rootSchema` is the tool's full inputSchema (needed to resolve $ref paths)
+// — always pass it; without it, $ref-based enums stay invisible.
+function unwrapSchema(def = {}, rootSchema = {}) {
+  if (def.$ref) {
+    const resolved = resolveLocalRef(def.$ref, rootSchema);
+    if (resolved) {
+      return unwrapSchema({ ...resolved, description: def.description ?? resolved.description }, rootSchema);
     }
   }
+
+  const branches = Array.isArray(def.anyOf) ? def.anyOf : Array.isArray(def.oneOf) ? def.oneOf : null;
+  if (branches) {
+    const resolvedBranches = branches.map(b => {
+      if (b && b.$ref) return resolveLocalRef(b.$ref, rootSchema) || b;
+      return b;
+    });
+    const branch = resolvedBranches.find(s => s && s.type !== 'null');
+    if (branch) {
+      return unwrapSchema({ ...branch, description: def.description ?? branch.description }, rootSchema);
+    }
+  }
+
   return def;
 }
 
@@ -335,14 +370,18 @@ function baseType(def = {}) {
 // left empty and a warning is logged — the model's own guessed values stay
 // in place rather than the tool call failing entirely.
 async function askJevEnumPicksForTool(clinicalState, tool, toolArgs) {
-  const props = tool?.schema?.properties || {};
+  const schema = tool?.schema || {};
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
   const questions = {};
   const optionMaps = {};
+  const recognizedAsEnum = new Set();
 
   for (const [paramName, rawDef] of Object.entries(props)) {
-    const paramDef = unwrapSchema(rawDef);
+    const paramDef = unwrapSchema(rawDef, schema);
     if (!Array.isArray(paramDef.enum) || paramDef.enum.length === 0) continue;
 
+    recognizedAsEnum.add(paramName);
     optionMaps[paramName] = new Map(paramDef.enum.map(opt => [String(opt), opt]));
 
     const criteria = {};
@@ -360,6 +399,23 @@ async function askJevEnumPicksForTool(clinicalState, tool, toolArgs) {
         `but choose whichever option genuinely fits best; don't just default to it.`,
       criteria
     };
+  }
+
+  // Diagnostic: a required param the model left out, that we ALSO never
+  // recognized as enum-shaped, is exactly the "No value provided for
+  // required argument: X" failure mode — it was never a candidate for
+  // Jev's resolution in the first place. If this fires for a param you
+  // believe IS an enum, the schema is hiding it in a shape unwrapSchema
+  // doesn't handle yet (raw $defs structure would confirm it — GET
+  // /api/servers/:serverId/tools and find this tool's inputSchema).
+  for (const paramName of required) {
+    if (!(paramName in toolArgs) && !recognizedAsEnum.has(paramName)) {
+      console.warn(
+        `"${tool.name}": required param "${paramName}" is missing from the model's call AND wasn't ` +
+        `recognized as an enum, so Jev never got a chance to resolve it. Raw schema for this param: ` +
+        `${JSON.stringify(props[paramName])}`
+      );
+    }
   }
 
   if (Object.keys(questions).length === 0) {
