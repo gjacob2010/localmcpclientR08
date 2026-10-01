@@ -304,8 +304,9 @@ function classifyTool(tool) {
 }
 
 // ── Schema helpers ─────────────────────────────────────────────────────
-// Handles both `anyOf` (nullable wrapper) and `oneOf` (same shape, used by
-// some schema generators) so a param wrapped either way is still seen.
+// Handles `$ref`, `allOf` (Pydantic-v1-style `$ref` + description wrapper),
+// and `anyOf`/`oneOf` (nullable wrapper) so a param hidden behind any of
+// these still gets its real enum surfaced.
 // Resolves a local JSON Schema $ref ("#/$defs/Foo" or "#/definitions/Foo")
 // against the tool's own root schema. Returns null if it can't be resolved
 // (a remote $ref, or a path that doesn't exist).
@@ -321,20 +322,40 @@ function resolveLocalRef(ref, rootSchema) {
 }
 
 // Unwraps a property definition down to something with a real `enum` array
-// if one exists, handling three patterns that otherwise hide it:
+// if one exists, handling four patterns that otherwise hide it:
 //   - `$ref` pointing at a shared definition (common with Pydantic/FastMCP-
 //     style generators — the enum often lives under $defs/definitions, not
 //     inline on the property itself)
+//   - `allOf: [{ $ref }]` alongside a sibling `description` — Pydantic v1
+//     (and others) emit this INSTEAD OF a bare `$ref` whenever the field
+//     also carries its own description, because some JSON Schema drafts
+//     disallow sibling keys next to `$ref`. This is almost certainly why a
+//     "Gateway_N"-style selector goes invisible: the property object has
+//     `allOf` + `description`, no `enum` key visible, and no `$ref` key at
+//     the top level either — a plain `$ref` check alone misses it entirely.
 //   - `anyOf`/`oneOf` nullable wrappers (optional enum params)
-//   - a $ref INSIDE an anyOf/oneOf branch (both patterns combined)
-// `rootSchema` is the tool's full inputSchema (needed to resolve $ref paths)
-// — always pass it; without it, $ref-based enums stay invisible.
+//   - a `$ref` INSIDE an anyOf/oneOf/allOf branch (combined patterns)
+// `rootSchema` is the tool's full inputSchema (needed to resolve $ref
+// paths) — always pass it; without it, $ref-based enums stay invisible.
 function unwrapSchema(def = {}, rootSchema = {}) {
   if (def.$ref) {
     const resolved = resolveLocalRef(def.$ref, rootSchema);
     if (resolved) {
       return unwrapSchema({ ...resolved, description: def.description ?? resolved.description }, rootSchema);
     }
+  }
+
+  // allOf: merge every branch (resolving any $ref each branch carries) into
+  // one object, then keep unwrapping from there. In practice this is
+  // almost always a single-item array — `{ allOf: [{ $ref }], description }`
+  // — but merge all branches in case a generator emits more than one.
+  if (Array.isArray(def.allOf) && def.allOf.length > 0) {
+    const merged = {};
+    for (const branch of def.allOf) {
+      const resolvedBranch = (branch && branch.$ref) ? resolveLocalRef(branch.$ref, rootSchema) : branch;
+      if (resolvedBranch && typeof resolvedBranch === 'object') Object.assign(merged, resolvedBranch);
+    }
+    return unwrapSchema({ ...merged, description: def.description ?? merged.description }, rootSchema);
   }
 
   const branches = Array.isArray(def.anyOf) ? def.anyOf : Array.isArray(def.oneOf) ? def.oneOf : null;
@@ -683,9 +704,9 @@ app.get('/api/servers/:serverId/tool-classification', async (req, res) => {
 // right before each tool executes: if it has enum parameters, Jev resolves
 // them and its answer is applied unconditionally (see askJevEnumPicksForTool
 // above). The loop ends naturally the first time the model responds with no
-// tool calls — that response IS the final answer, streamed as it's
-// generated. If MAX_ITERATIONS is hit first, one last no-tools call forces
-// a wrap-up so the turn always ends with a summary.
+// tool calls — that response IS the final answer, streamed live as it's
+// generated, no buffering. If MAX_ITERATIONS is hit first, one last
+// no-tools call forces a wrap-up so the turn always ends with a summary.
 app.post('/api/chat', async (req, res) => {
   try {
     const {
@@ -817,11 +838,6 @@ Sources of information:
       const reader = openRouterResponse.body.getReader();
       const decoder = new TextDecoder();
       let streamBuffer = '';
-      // Content is only forwarded to the client once we know this round has
-      // no tool calls (see below) — buffering here avoids streaming
-      // preamble text from a round that turns out to also call a tool,
-      // which would otherwise look like a spurious extra "summary".
-      let bufferedDeltas = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -840,9 +856,17 @@ Sources of information:
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta;
 
+              // Streamed live, as each token arrives from OpenRouter — not
+              // buffered until the round finishes. This is what gives the
+              // final answer real word-by-word streaming instead of one
+              // block landing all at once. The trade-off: if this round
+              // ALSO turns out to include tool_calls, whatever text was
+              // already streamed was commentary ahead of a tool call, not
+              // the final answer — see the content_discard event below,
+              // sent once the round finishes, so the client can remove it.
               if (delta?.content) {
                 fullContent += delta.content;
-                bufferedDeltas.push(delta.content);
+                sendEvent('content', { content: delta.content });
               }
 
               if (delta?.tool_calls) {
@@ -864,15 +888,26 @@ Sources of information:
 
       toolCalls = toolCalls.filter(Boolean);
 
+      if (toolCalls.length > 0 && fullContent) {
+        // This round's text was commentary ahead of a tool call, not the
+        // final answer, but it was already streamed live above. Tell the
+        // client to discard it so it doesn't linger next to the
+        // tool-call UI. The frontend needs to handle this event by
+        // removing the text it just appended for this round — if it
+        // doesn't, that preamble text will stay visible (the old
+        // behavior before this rewrite never showed it at all, at the
+        // cost of buffering the whole final answer before streaming any
+        // of it).
+        sendEvent('content_discard', { content: fullContent });
+      }
+
       const assistantMessage = { role: 'assistant', content: fullContent || null };
       if (toolCalls.length > 0) assistantMessage.tool_calls = toolCalls;
       conversationMessages.push(assistantMessage);
 
       if (toolCalls.length === 0) {
-        // No tool calls this round: this is the final answer. Flush the
-        // buffered text now, as the real summary.
-        for (const chunk of bufferedDeltas) sendEvent('content', { content: chunk });
-
+        // No tool calls this round: the content streamed live above IS the
+        // final answer. Nothing left to flush.
         sendEvent('done', {
           conversationMessages: conversationMessages,
           toolResults: toolResults
